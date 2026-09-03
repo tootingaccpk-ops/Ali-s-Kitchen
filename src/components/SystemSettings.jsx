@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from './firebase'; // Adjust the path if your firebase.js is in a different folder
+import { db } from '../firebase'; // Adjust the path if your firebase.js is in a different folder
 import { collection, addDoc, getDocs, updateDoc, doc } from "firebase/firestore";
 import { Settings, Save, FileUp, FileSpreadsheet, FileText, XCircle, Users, UserPlus, Trash2, Key, Database, Download, UploadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -42,76 +42,114 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [pendingAccId, setPendingAccId] = useState(null);
 
   const [users, setUsers] = useState([]);
-  useEffect(() => {
-  const fetchUsers = async () => {
-    try {
-      // 1. Ask Firebase for all documents in the "erp_users" collection
-      const querySnapshot = await getDocs(collection(db, "erp_users"));
-      const cloudUsers = [];
-      
-      querySnapshot.forEach((doc) => {
-        cloudUsers.push({ id: doc.id, ...doc.data() });
-      });
-      
-      // 2. If the cloud has users, display them. If empty, load your default master admin.
-      if (cloudUsers.length > 0) {
-        setUsers(cloudUsers);
-      } else {
-        setUsers([{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]);
-      }
-    } catch (error) {
-      console.error("Error fetching users from cloud: ", error);
-    }
-  };
 
-  fetchUsers();
-}, []);
-  const [newUsername, setNewUsername] = useState(''); const [newPassword, setNewPassword] = useState(''); const [newRole, setNewRole] = useState(''); const [newPermissions, setNewPermissions] = useState(['Dashboard', 'Daily Sales']);
+  // Firebase Cloud Fetch & LocalStorage Migration Hook
+  useEffect(() => {
+    const fetchAndMigrateUsers = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "erp_users"));
+        const cloudUsers = [];
+        querySnapshot.forEach((doc) => {
+          cloudUsers.push({ id: doc.id, ...doc.data() });
+        });
+        
+        if (cloudUsers.length > 0) {
+          setUsers(cloudUsers);
+        } else {
+          const localData = JSON.parse(localStorage.getItem('erp_users'));
+          
+          if (Array.isArray(localData) && localData.length > 0) {
+            for (const localUser of localData) {
+              const { id, ...userDataWithoutOldId } = localUser;
+              await addDoc(collection(db, "erp_users"), {
+                ...userDataWithoutOldId,
+                createdAt: new Date()
+              });
+            }
+            
+            const refreshedSnapshot = await getDocs(collection(db, "erp_users"));
+            const migratedUsers = [];
+            refreshedSnapshot.forEach((doc) => {
+              migratedUsers.push({ id: doc.id, ...doc.data() });
+            });
+            setUsers(migratedUsers);
+          } else {
+            setUsers([{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]);
+          }
+        }
+      } catch (error) {
+        console.error("Error handling user migration/fetch: ", error);
+      }
+    };
+
+    fetchAndMigrateUsers();
+  }, []);
+
+  const [newUsername, setNewUsername] = useState(''); 
+  const [newPassword, setNewPassword] = useState(''); 
+  const [newRole, setNewRole] = useState(''); 
+  const [newPermissions, setNewPermissions] = useState(['Dashboard', 'Daily Sales']);
 
   const isAdminOrOwner = newRole.toLowerCase() === 'admin' || newRole.toLowerCase() === 'owner';
 
-  const handlePermissionToggle = (tab) => { if (newPermissions.includes(tab)) { setNewPermissions(newPermissions.filter(t => t !== tab)); } else { setNewPermissions([...newPermissions, tab]); } };
-
-  const handleAddUser = async () => {
-  if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
-  if (users.some(u => String(u.username).toLowerCase() === newUsername.toLowerCase())) return alert("A user with this username already exists.");
-  if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
-  
-  const finalPermissions = isAdminOrOwner ? ALL_TABS : newPermissions;
-  
-  // Prepare the data to send to the cloud (we removed the manual ID generation)
-  const newUserData = { 
-    username: newUsername.trim(), 
-    password: newPassword.trim(), 
-    role: newRole.trim(), 
-    permissions: finalPermissions,
-    createdAt: new Date()
+  const handlePermissionToggle = (tab) => { 
+    if (newPermissions.includes(tab)) { 
+      setNewPermissions(newPermissions.filter(t => t !== tab)); 
+    } else { 
+      setNewPermissions([...newPermissions, tab]); 
+    } 
   };
 
-  try {
-    // 1. Send data to Firebase collection named "erp_users"
-    const docRef = await addDoc(collection(db, "erp_users"), newUserData);
+  const handleAddUser = async () => {
+    if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
+    if (users.some(u => String(u.username).toLowerCase() === newUsername.toLowerCase())) return alert("A user with this username already exists.");
+    if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
     
-    // 2. Update React screen immediately using the highly secure auto-generated ID from Firebase
-    const updatedUsers = [...users, { id: docRef.id, ...newUserData }];
-    setUsers(updatedUsers); 
+    const finalPermissions = isAdminOrOwner ? ALL_TABS : newPermissions;
     
-    // 3. Clear inputs
-    setNewUsername(''); 
-    setNewPassword(''); 
-    setNewRole(''); 
-    setNewPermissions(['Dashboard', 'Daily Sales']); 
-    
-    alert("✅ User added successfully to the cloud!");
-  } catch (error) {
-    console.error("Error adding user to Firebase: ", error);
-    alert("Database Error: Could not save the user.");
-  }
-};
+    const newUserData = { 
+      username: newUsername.trim(), 
+      password: newPassword.trim(), 
+      role: newRole.trim(), 
+      permissions: finalPermissions,
+      createdAt: new Date()
+    };
 
-  const handleRemoveUser = (id) => { if (users.length === 1) return alert("You cannot delete the last user in the system."); if (window.confirm("Are you sure you want to delete this user?")) { const updatedUsers = users.filter(u => u.id !== id); setUsers(updatedUsers); localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); } };
+    try {
+      const docRef = await addDoc(collection(db, "erp_users"), newUserData);
+      const updatedUsers = [...users, { id: docRef.id, ...newUserData }];
+      setUsers(updatedUsers); 
+      
+      setNewUsername(''); 
+      setNewPassword(''); 
+      setNewRole(''); 
+      setNewPermissions(['Dashboard', 'Daily Sales']); 
+      
+      alert("✅ User added successfully to the cloud!");
+    } catch (error) {
+      console.error("Error adding user to Firebase: ", error);
+      alert("Database Error: Could not save the user.");
+    }
+  };
 
-  const handleChangePassword = (id) => { const newPass = window.prompt("Enter the new password for this user:"); if (newPass && newPass.trim() !== "") { const updatedUsers = users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u); setUsers(updatedUsers); localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); alert("✅ Password updated successfully."); } };
+  const handleRemoveUser = (id) => { 
+    if (users.length === 1) return alert("You cannot delete the last user in the system."); 
+    if (window.confirm("Are you sure you want to delete this user?")) { 
+      const updatedUsers = users.filter(u => u.id !== id); 
+      setUsers(updatedUsers); 
+      localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); 
+    } 
+  };
+
+  const handleChangePassword = (id) => { 
+    const newPass = window.prompt("Enter the new password for this user:"); 
+    if (newPass && newPass.trim() !== "") { 
+      const updatedUsers = users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u); 
+      setUsers(updatedUsers); 
+      localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); 
+      alert("✅ Password updated successfully."); 
+    } 
+  };
 
   const handleAccountChange = (id, field, value) => {
     setLocalAccounts(prev => prev.map(acc => { if (acc.id === id) { let parsedValue = value; if (field === 'balance') parsedValue = value === '' ? 0 : parseFloat(value); return { ...acc, [field]: parsedValue }; } return acc; }));
@@ -122,7 +160,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
   const cancelChanges = () => { if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { setLocalAccounts(accounts.length > 0 ? accounts : defaultAccounts); } };
 
-  // ADD CATEGORY LOGIC
   const handleSaveCategory = (e) => {
     e.preventDefault();
     if (!newCatData.name.trim()) return;
