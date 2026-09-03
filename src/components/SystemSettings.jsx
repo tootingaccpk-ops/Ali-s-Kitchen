@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { db } from './firebase'; // Adjust the path if your firebase.js is in a different folder
+import { collection, addDoc, getDocs, updateDoc, doc } from "firebase/firestore";
 import { Settings, Save, FileUp, FileSpreadsheet, FileText, XCircle, Users, UserPlus, Trash2, Key, Database, Download, UploadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -39,25 +41,73 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [newCatData, setNewCatData] = useState({ name: '', type: 'Expense' });
   const [pendingAccId, setPendingAccId] = useState(null);
 
-  const [users, setUsers] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem('erp_users')); return Array.isArray(saved) && saved.length > 0 ? saved : [{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]; } catch (e) { return [{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]; }
-  });
-  
+  const [users, setUsers] = useState([]);
+  useEffect(() => {
+  const fetchUsers = async () => {
+    try {
+      // 1. Ask Firebase for all documents in the "erp_users" collection
+      const querySnapshot = await getDocs(collection(db, "erp_users"));
+      const cloudUsers = [];
+      
+      querySnapshot.forEach((doc) => {
+        cloudUsers.push({ id: doc.id, ...doc.data() });
+      });
+      
+      // 2. If the cloud has users, display them. If empty, load your default master admin.
+      if (cloudUsers.length > 0) {
+        setUsers(cloudUsers);
+      } else {
+        setUsers([{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]);
+      }
+    } catch (error) {
+      console.error("Error fetching users from cloud: ", error);
+    }
+  };
+
+  fetchUsers();
+}, []);
   const [newUsername, setNewUsername] = useState(''); const [newPassword, setNewPassword] = useState(''); const [newRole, setNewRole] = useState(''); const [newPermissions, setNewPermissions] = useState(['Dashboard', 'Daily Sales']);
 
   const isAdminOrOwner = newRole.toLowerCase() === 'admin' || newRole.toLowerCase() === 'owner';
 
   const handlePermissionToggle = (tab) => { if (newPermissions.includes(tab)) { setNewPermissions(newPermissions.filter(t => t !== tab)); } else { setNewPermissions([...newPermissions, tab]); } };
 
-  const handleAddUser = () => {
-    if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
-    if (users.some(u => String(u.username).toLowerCase() === newUsername.toLowerCase())) return alert("A user with this username already exists.");
-    if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
-    const finalPermissions = isAdminOrOwner ? ALL_TABS : newPermissions;
-    const updatedUsers = [...users, { id: Date.now().toString(), username: newUsername.trim(), password: newPassword.trim(), role: newRole.trim(), permissions: finalPermissions }];
-    setUsers(updatedUsers); localStorage.setItem('erp_users', JSON.stringify(updatedUsers));
-    setNewUsername(''); setNewPassword(''); setNewRole(''); setNewPermissions(['Dashboard', 'Daily Sales']); alert("✅ User added successfully!");
+  const handleAddUser = async () => {
+  if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
+  if (users.some(u => String(u.username).toLowerCase() === newUsername.toLowerCase())) return alert("A user with this username already exists.");
+  if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
+  
+  const finalPermissions = isAdminOrOwner ? ALL_TABS : newPermissions;
+  
+  // Prepare the data to send to the cloud (we removed the manual ID generation)
+  const newUserData = { 
+    username: newUsername.trim(), 
+    password: newPassword.trim(), 
+    role: newRole.trim(), 
+    permissions: finalPermissions,
+    createdAt: new Date()
   };
+
+  try {
+    // 1. Send data to Firebase collection named "erp_users"
+    const docRef = await addDoc(collection(db, "erp_users"), newUserData);
+    
+    // 2. Update React screen immediately using the highly secure auto-generated ID from Firebase
+    const updatedUsers = [...users, { id: docRef.id, ...newUserData }];
+    setUsers(updatedUsers); 
+    
+    // 3. Clear inputs
+    setNewUsername(''); 
+    setNewPassword(''); 
+    setNewRole(''); 
+    setNewPermissions(['Dashboard', 'Daily Sales']); 
+    
+    alert("✅ User added successfully to the cloud!");
+  } catch (error) {
+    console.error("Error adding user to Firebase: ", error);
+    alert("Database Error: Could not save the user.");
+  }
+};
 
   const handleRemoveUser = (id) => { if (users.length === 1) return alert("You cannot delete the last user in the system."); if (window.confirm("Are you sure you want to delete this user?")) { const updatedUsers = users.filter(u => u.id !== id); setUsers(updatedUsers); localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); } };
 
