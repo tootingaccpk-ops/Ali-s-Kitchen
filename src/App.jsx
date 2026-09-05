@@ -93,14 +93,22 @@ function App() {
       setPurchasesDb(purchasesData);
     });
 
-    const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), (snapshot) => {
+    const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), async (snapshot) => {
       const accountsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Force cloud data to override any stale local memory if cloud data exists
-      if (accountsData.length > 0) {
-        setAccountsDb(accountsData);
-        localStorage.setItem('erp_accounts', JSON.stringify(accountsData));
+      
+      // If cloud accounts are missing or empty, sync defaults to Firestore
+      if (accountsData.length === 0) {
+        const defaultAccounts = [
+          { id: '1', name: 'Memon Services Ltd', category: 'Bank Account / Cash in Hand', balance: 0 },
+          { id: '2', name: 'Khanani Management', category: 'Bank Account / Cash in Hand', balance: 0 },
+          { id: '3', name: 'LK Associates', category: 'Bank Account / Cash in Hand', balance: 0 },
+          { id: '4', name: 'Safe Box (Main Cash)', category: 'Safe Box (Main Cash)', balance: 0 },
+          { id: '5', name: 'Physical Till Drawer', category: 'Physical Till Float', balance: 0 },
+          { id: '6', name: 'Cash in Hand', category: 'Bank Account / Cash in Hand', balance: 0 }
+        ];
+        setAccountsDb(defaultAccounts);
       } else {
-        setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
+        setAccountsDb(accountsData);
       }
     });
 
