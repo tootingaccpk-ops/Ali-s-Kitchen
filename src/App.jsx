@@ -95,12 +95,23 @@ function App() {
 
     const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), (snapshot) => {
       const accountsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAccountsDb(accountsData.length > 0 ? accountsData : (JSON.parse(localStorage.getItem('erp_accounts')) || []));
+      // Force cloud data to override any stale local memory if cloud data exists
+      if (accountsData.length > 0) {
+        setAccountsDb(accountsData);
+        localStorage.setItem('erp_accounts', JSON.stringify(accountsData));
+      } else {
+        setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
+      }
     });
 
     const unsubscribeDelivery = onSnapshot(collection(db, "erp_delivery"), (snapshot) => {
       const deliveryData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setDeliveryDb(deliveryData.length > 0 ? deliveryData : (JSON.parse(localStorage.getItem('erp_delivery')) || []));
+      if (deliveryData.length > 0) {
+        setDeliveryDb(deliveryData);
+        localStorage.setItem('erp_delivery', JSON.stringify(deliveryData));
+      } else {
+        setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
+      }
     });
 
     return () => {
