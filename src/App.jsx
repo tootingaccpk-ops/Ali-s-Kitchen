@@ -69,18 +69,15 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // FIREBASE REAL-TIME SYNC BLOCK
+  // FIREBASE REAL-TIME SYNC BLOCK FOR ALL COLLECTIONS
   useEffect(() => {
-    // Keep loading un-migrated items from local storage so the app doesn't break
     try {
-      setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
-      setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
       setCategoriesMap(JSON.parse(localStorage.getItem('erp_categories')) || {});
     } catch (e) {
-      console.error("Error loading DB from localStorage", e);
+      console.error("Error loading categories from localStorage", e);
     }
 
-    // Real-time listeners for the cloud databases
+    // Real-time listeners for all cloud databases
     const unsubscribeSales = onSnapshot(collection(db, "erp_sales_db"), (snapshot) => {
       const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setSalesDb(salesData);
@@ -96,17 +93,27 @@ function App() {
       setPurchasesDb(purchasesData);
     });
 
+    const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), (snapshot) => {
+      const accountsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAccountsDb(accountsData.length > 0 ? accountsData : (JSON.parse(localStorage.getItem('erp_accounts')) || []));
+    });
+
+    const unsubscribeDelivery = onSnapshot(collection(db, "erp_delivery"), (snapshot) => {
+      const deliveryData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setDeliveryDb(deliveryData.length > 0 ? deliveryData : (JSON.parse(localStorage.getItem('erp_delivery')) || []));
+    });
+
     return () => {
       unsubscribeSales();
       unsubscribeReceipts();
       unsubscribePurchases();
+      unsubscribeAccounts();
+      unsubscribeDelivery();
     };
   }, []);
 
-  // Update local storage for un-migrated items only
-  useEffect(() => { if (accountsDb.length > 0) localStorage.setItem('erp_accounts', JSON.stringify(accountsDb)); }, [accountsDb]);
+  // Update local storage mappings
   useEffect(() => { if (Object.keys(categoriesMap).length > 0) localStorage.setItem('erp_categories', JSON.stringify(categoriesMap)); }, [categoriesMap]);
-  useEffect(() => { if (deliveryDb.length > 0) localStorage.setItem('erp_delivery', JSON.stringify(deliveryDb)); }, [deliveryDb]);
 
   if (!isAuthenticated) {
     return <LoginScreen onLoginSuccess={(user) => {
