@@ -161,6 +161,35 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const handleDateChange = (e) => {
+    const { value } = e.target;
+    if (!value) {
+      setFormData(prev => ({ ...prev, date: value }));
+      return;
+    }
+    const targetNum = toDateNum(value);
+    const existing = activeDb.find(r => toDateNum(r.date) === targetNum);
+
+    if (existing) {
+      if (originalDate && toDateNum(existing.date) === toDateNum(originalDate)) {
+        setFormData(prev => ({ ...prev, date: value }));
+        return;
+      }
+      if (window.confirm(`Data already exists for ${value}. Load it to edit?`)) {
+        setFormData({ ...initialFormState, ...existing, date: value });
+        setOriginalDate(existing.date);
+        return;
+      }
+    }
+    // If no existing record or user declined loading, refresh form for the new blank date
+    setFormData({
+      ...initialFormState,
+      date: value,
+      openingTill: getOpeningTillForDate(value)
+    });
+    setOriginalDate(null);
+  };
+
   const handleDateBlur = (e) => {
     const { value } = e.target;
     if (!value) return;
@@ -175,7 +204,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
         return;
       }
     }
-    setFormData(prev => ({ ...prev, date: value, openingTill: getOpeningTillForDate(value) }));
   };
 
   const handleKeyDown = (e) => {
@@ -320,7 +348,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
               <tr>
                 <td style={{ padding: '6px 16px', background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, fontWeight: '700', border: `1px solid ${sheetTheme.border}`, fontSize: '12px' }}>Date of Record</td>
                 <td style={{ padding: '0', border: `1px solid ${sheetTheme.border}`, background: '#fff' }}>
-                  <input ref={dateInputRef} type="date" name="date" value={formData.date || ''} onBlur={handleDateBlur} onChange={handleChange} onKeyDown={handleKeyDown} style={{ border: 'none', padding: '6px 12px', outline: 'none', fontFamily: sheetTheme.font, fontSize: '13px', fontWeight: '700', textAlign: 'right' }} />
+                  <input ref={dateInputRef} type="date" name="date" value={formData.date || ''} onChange={handleDateChange} onBlur={handleDateBlur} onKeyDown={handleKeyDown} style={{ border: 'none', padding: '6px 12px', outline: 'none', fontFamily: sheetTheme.font, fontSize: '13px', fontWeight: '700', textAlign: 'right' }} />
                 </td>
               </tr>
             </tbody>
