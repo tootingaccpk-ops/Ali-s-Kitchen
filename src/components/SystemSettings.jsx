@@ -49,6 +49,13 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
   const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
+  // Keep localAccounts synced if cloud accounts prop updates
+  useEffect(() => {
+    if (accounts.length > 0) {
+      setLocalAccounts(accounts);
+    }
+  }, [accounts]);
+
   // Firebase Cloud Fetch & LocalStorage Migration Hook
   useEffect(() => {
     const fetchAndMigrateUsers = async () => {
@@ -197,7 +204,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
 
-  // ROBUST SAFE SETTINGS WITH NON-BLOCKING LOCAL UPDATE & FIREBASE CLOUD SYNC
+  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)
   const saveSettings = async () => {
     const names = localAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
     const hasDuplicates = new Set(names).size !== names.length;
@@ -224,15 +231,14 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       }
     });
 
-    // Save locally first so UI updates instantly
+    // Update local state and category maps instantly
     setCategoriesMap(newMap);
     setAccounts(localAccounts);
-    localStorage.setItem('erp_accounts', JSON.stringify(localAccounts));
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
 
     try {
-      // Background Cloud Sync to Firebase
+      // Sync directly to Firebase Firestore `erp_accounts` collection
       const querySnapshot = await getDocs(collection(db, "erp_accounts"));
       const existingDocs = {};
       querySnapshot.forEach((docSnap) => {
@@ -257,7 +263,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       alert('✅ Chart of Accounts Saved Successfully to Cloud & Local Storage!');
     } catch (error) {
       console.error("Error syncing accounts to Firebase:", error);
-      alert('✅ Saved locally! (Note: Cloud sync skipped due to network/permissions rule).');
+      alert('⚠️ Saved locally, but cloud sync encountered an issue. Check your Firebase connection rules.');
     }
   };
 
@@ -330,7 +336,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
             runningExpectedTill = saleData.physicalTill;
             let safeColDateRaw = cleanKey(row, 'Safe Box Col');
             if (safeColDateRaw && saleData.safeBox > 0) {
-              let colDateStr = safeColDateRaw; if (typeof colDateStr === 'number') { const p = XLSX.SSF.parse_date_code(colDateStr); colDateStr = `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`; } else if (typeof colDateStr === 'string' && colDateStr.includes('/')) { const parts = colDateStr.split('/'); colDateStr = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : colDateStr; }
+              let colDateStr = safeColDateRaw; if (typeof colDateStr === 'number') { const p = XLSX.SSF.parse_date_code(colDateStr); colDateStr = `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`; } else if (typeof colDateStr === 'string' && colDateStr.includes('/')) { const parts = colDateStr.split('/'); colDateStr = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : dateStr; }
               saleData.safeBoxColDate = colDateStr; newReceiptRecords.push({ id: 'TRF-' + recordId, date: colDateStr, type: 'Transfer', mode: 'Cash', fromBank: 'Safe Box (Main Cash)', toBank: 'Cash in Hand', amount: saleData.safeBox, description: `Auto-Collected Safe Drop from ${dateStr}` });
             }
             newSalesRecords.push(saleData);
@@ -541,7 +547,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
                 <button onClick={addAccount} style={{ padding: '12px 24px', background: '#f1f5f9', color: '#0f172a', border: '1px solid #cbd5e1', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>+ Add Custom Account</button>
                 <button onClick={cancelChanges} style={{ padding: '12px 24px', background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}><XCircle size={16} /> Discard Changes</button>
               </div>
-              <button onClick={saveSettings} style={{ padding: '12px 32px', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}><Save size={18} /> Save Entire Chart of Accounts</button>
+              <button onClick={saveSettings} style={{ padding: '12px 32px', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}><Save size={18} /> Save Entire Chart of Accounts to Cloud</button>
             </div>
           </div>
         </div>
