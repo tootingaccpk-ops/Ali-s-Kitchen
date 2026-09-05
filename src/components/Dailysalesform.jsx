@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { doc, writeBatch } from "firebase/firestore";
+import { db } from "../firebase"; // Adjust path if needed
 
 const getToday = () => new Date().toISOString().split('T')[0];
 
@@ -93,6 +95,31 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
   const [originalDate, setOriginalDate] = useState(null);
   const dateInputRef = useRef(null);
 
+  // MIGRATION SCRIPT: Moves existing localStorage sales to Firebase on first load
+  useEffect(() => {
+    const migrateToFirebase = async () => {
+      const localData = JSON.parse(localStorage.getItem('erp_sales_db'));
+      const isMigrated = localStorage.getItem('erp_sales_migrated');
+      
+      if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
+        try {
+          console.log("Migrating Daily Sales to Firebase...");
+          const batch = writeBatch(db);
+          localData.forEach(record => {
+            const docRef = doc(db, "erp_sales_db", record.date);
+            batch.set(docRef, record);
+          });
+          await batch.commit();
+          localStorage.setItem('erp_sales_migrated', 'true');
+          console.log("Sales Migration Complete!");
+        } catch (error) {
+          console.error("Migration failed: ", error);
+        }
+      }
+    };
+    migrateToFirebase();
+  }, []);
+
   const getOpeningTillForDate = (dateStr, currentDb = activeDb) => {
     try {
       const targetNum = toDateNum(dateStr);
@@ -118,7 +145,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
        setFormData(prev => ({ ...prev, date: targetDate, openingTill: getOpeningTillForDate(targetDate) }));
        setOriginalDate(null);
     }
-  }, [editDate]);
+  }, [editDate, activeDb]); // added activeDb so it syncs if Firebase pushes an update
 
   const handleChange = (e) => {
     const { name, value, type } = e.target;
@@ -166,7 +193,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
 
   const isExistingRecord = !!originalDate || (formData.date && activeDb.some(r => toDateNum(r.date) === toDateNum(formData.date)));
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const targetNum = toDateNum(formData.date);
     let updatedDb;
@@ -192,17 +219,29 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     });
     
     if (setSalesDb) setSalesDb(fullyUpdatedDb);
-    localStorage.setItem('erp_sales_db', JSON.stringify(fullyUpdatedDb));
-
-    alert(originalDate || isExistingRecord ? `✅ Daily Sales Entry for ${formData.date} Updated!` : `✅ Daily Sales Entry for ${formData.date} Saved!`);
     
-    setOriginalDate(null);
-    setFormData({ ...initialFormState, date: getToday(), openingTill: getOpeningTillForDate(getToday(), fullyUpdatedDb) });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    try {
+      // Pushing to Firebase using a writeBatch to safely update all recalculated days at once
+      const batch = writeBatch(db);
+      fullyUpdatedDb.forEach(record => {
+        const docRef = doc(db, "erp_sales_db", record.date);
+        batch.set(docRef, record);
+      });
+      await batch.commit();
+
+      alert(originalDate || isExistingRecord ? `✅ Daily Sales Entry for ${formData.date} Updated!` : `✅ Daily Sales Entry for ${formData.date} Saved!`);
+      
+      setOriginalDate(null);
+      setFormData({ ...initialFormState, date: getToday(), openingTill: getOpeningTillForDate(getToday(), fullyUpdatedDb) });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    } catch (error) {
+      console.error("Error saving to Firebase: ", error);
+      alert("Database Error: Could not save the sales record.");
+    }
   };
 
-  const handleDelete = (e) => {
+  const handleDelete = async (e) => {
     e.preventDefault();
     const targetDate = originalDate || formData.date;
     if (!window.confirm(`Are you sure you want to permanently delete the sales record for ${targetDate}?`)) return;
@@ -220,13 +259,28 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     });
     
     if (setSalesDb) setSalesDb(fullyUpdatedDb);
-    localStorage.setItem('erp_sales_db', JSON.stringify(fullyUpdatedDb));
-    alert("✅ Daily Sales Record Deleted!");
     
-    setOriginalDate(null);
-    setFormData({ ...initialFormState, date: getToday(), openingTill: getOpeningTillForDate(getToday(), fullyUpdatedDb) });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    try {
+      const batch = writeBatch(db);
+      // Update the remaining recalculated records
+      fullyUpdatedDb.forEach(record => {
+        const docRef = doc(db, "erp_sales_db", record.date);
+        batch.set(docRef, record);
+      });
+      // Delete the specific document from Firebase
+      batch.delete(doc(db, "erp_sales_db", targetDate));
+      await batch.commit();
+
+      alert("✅ Daily Sales Record Deleted!");
+      
+      setOriginalDate(null);
+      setFormData({ ...initialFormState, date: getToday(), openingTill: getOpeningTillForDate(getToday(), fullyUpdatedDb) });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    } catch (error) {
+      console.error("Error deleting from Firebase: ", error);
+      alert("Database Error: Could not delete the sales record.");
+    }
   };
 
   const handleCancel = (e) => {

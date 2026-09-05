@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore'; 
+import { db } from './firebase'; 
 import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale } from 'lucide-react';
 import PurchasesExpenses from './components/PurchasesExpenses.jsx';
 import LoginScreen from './components/LoginScreen.jsx';
@@ -67,23 +69,43 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
+  // FIREBASE REAL-TIME SYNC BLOCK
   useEffect(() => {
+    // Keep loading un-migrated items from local storage so the app doesn't break
     try {
-      setSalesDb(JSON.parse(localStorage.getItem('erp_sales_db')) || []);
-      setPurchasesDb(JSON.parse(localStorage.getItem('erp_purchases')) || []);
-      setReceiptsDb(JSON.parse(localStorage.getItem('erp_receipts')) || []);
       setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
       setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
       setCategoriesMap(JSON.parse(localStorage.getItem('erp_categories')) || {});
     } catch (e) {
       console.error("Error loading DB from localStorage", e);
     }
+
+    // Real-time listeners for the cloud databases
+    const unsubscribeSales = onSnapshot(collection(db, "erp_sales_db"), (snapshot) => {
+      const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSalesDb(salesData);
+    });
+
+    const unsubscribeReceipts = onSnapshot(collection(db, "erp_receipts"), (snapshot) => {
+      const receiptsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setReceiptsDb(receiptsData);
+    });
+
+    const unsubscribePurchases = onSnapshot(collection(db, "erp_purchases"), (snapshot) => {
+      const purchasesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPurchasesDb(purchasesData);
+    });
+
+    return () => {
+      unsubscribeSales();
+      unsubscribeReceipts();
+      unsubscribePurchases();
+    };
   }, []);
 
+  // Update local storage for un-migrated items only
   useEffect(() => { if (accountsDb.length > 0) localStorage.setItem('erp_accounts', JSON.stringify(accountsDb)); }, [accountsDb]);
   useEffect(() => { if (Object.keys(categoriesMap).length > 0) localStorage.setItem('erp_categories', JSON.stringify(categoriesMap)); }, [categoriesMap]);
-  useEffect(() => { if (receiptsDb.length > 0) localStorage.setItem('erp_receipts', JSON.stringify(receiptsDb)); }, [receiptsDb]);
-  useEffect(() => { if (salesDb.length > 0) localStorage.setItem('erp_sales_db', JSON.stringify(salesDb)); }, [salesDb]);
   useEffect(() => { if (deliveryDb.length > 0) localStorage.setItem('erp_delivery', JSON.stringify(deliveryDb)); }, [deliveryDb]);
 
   if (!isAuthenticated) {
@@ -314,7 +336,6 @@ function App() {
               </div>
             )}
 
-            {/* THE NEW FINANCIAL STATEMENTS TAB */}
             {activeTab === 'Financial Statements' && hasAccess('Financial Statements') && (
               <div style={{ padding: '0px', boxSizing: 'border-box', width: '100%' }}>
                 <FinancialStatements 
@@ -328,7 +349,6 @@ function App() {
               </div>
             )}
             
-            {/* THE OLD REPORTS TAB (With P&L Removed from dropdown to avoid duplicates) */}
             {activeTab === 'Reports' && hasAccess('Reports') && (
               <div style={{ padding: '0px', boxSizing: 'border-box', width: '100%' }}>
                 <Reports 
