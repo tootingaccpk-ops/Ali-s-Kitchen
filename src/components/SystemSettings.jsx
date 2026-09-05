@@ -197,7 +197,8 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
 
-  const saveSettings = () => {
+  // ROBUST SAFE SETTINGS WITH NON-BLOCKING LOCAL UPDATE & FIREBASE CLOUD SYNC
+  const saveSettings = async () => {
     const names = localAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
     const hasDuplicates = new Set(names).size !== names.length;
     
@@ -223,12 +224,41 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       }
     });
 
+    // Save locally first so UI updates instantly
     setCategoriesMap(newMap);
     setAccounts(localAccounts);
     localStorage.setItem('erp_accounts', JSON.stringify(localAccounts));
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
-    alert('✅ Chart of Accounts Saved Successfully!');
+
+    try {
+      // Background Cloud Sync to Firebase
+      const querySnapshot = await getDocs(collection(db, "erp_accounts"));
+      const existingDocs = {};
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.name) existingDocs[data.name.trim().toLowerCase()] = docSnap.id;
+      });
+
+      for (const acc of localAccounts) {
+        const docData = {
+          name: acc.name.trim(),
+          category: acc.category || '',
+          balance: Number(acc.balance) || 0
+        };
+
+        const matchKey = acc.name.trim().toLowerCase();
+        if (existingDocs[matchKey]) {
+          await updateDoc(doc(db, "erp_accounts", existingDocs[matchKey]), docData);
+        } else {
+          await addDoc(collection(db, "erp_accounts"), docData);
+        }
+      }
+      alert('✅ Chart of Accounts Saved Successfully to Cloud & Local Storage!');
+    } catch (error) {
+      console.error("Error syncing accounts to Firebase:", error);
+      alert('✅ Saved locally! (Note: Cloud sync skipped due to network/permissions rule).');
+    }
   };
 
   const handleBackup = () => {
