@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
 import { Trash2, Edit2, Plus } from 'lucide-react';
 
 const getToday = () => {
@@ -160,6 +162,32 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
   const [formData, setFormData] = useState(getInitialFormState());
   const [searchTerm, setSearchTerm] = useState('');
 
+  // MIGRATION SCRIPT FOR DELIVERY SETTLEMENTS
+  useEffect(() => {
+    const migrateDeliveryToFirebase = async () => {
+      const localData = JSON.parse(localStorage.getItem('erp_delivery'));
+      const isMigrated = localStorage.getItem('erp_delivery_migrated');
+      
+      if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
+        try {
+          console.log("Migrating Delivery Settlements to Firebase...");
+          const batch = writeBatch(firebaseDb);
+          localData.forEach(record => {
+            const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
+            const docRef = doc(firebaseDb, "erp_delivery", recordId);
+            batch.set(docRef, { ...record, id: recordId });
+          });
+          await batch.commit();
+          localStorage.setItem('erp_delivery_migrated', 'true');
+          console.log("Delivery Migration Complete!");
+        } catch (error) {
+          console.error("Migration failed: ", error);
+        }
+      }
+    };
+    migrateDeliveryToFirebase();
+  }, []);
+
   useEffect(() => {
     if (db.length > 0) setLocalDb(db);
   }, [db]);
@@ -291,7 +319,7 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
   const liveVariance = val(formData.actualPayout) - liveExpectedPayout;
   const grossVariance = val(formData.platformGross) - effectiveErpGross;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.platform) return alert("Please select a Platform.");
 
@@ -310,13 +338,12 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     };
 
     let newDb;
-    if (formData.id) {
+    const isNew = !formData.id;
+    if (!isNew) {
       newDb = localDb.map(t => t.id === formData.id ? recordToSave : t);
-      alert(`✅ ${formData.platform} settlement updated!`);
     } else {
       recordToSave.id = Date.now().toString();
       newDb = [...localDb, recordToSave];
-      alert(`✅ ${formData.platform} settlement saved!`);
     }
     
     newDb.sort((a, b) => toDateNum(b.dateTo || b.date) - toDateNum(a.dateTo || a.date));
@@ -324,38 +351,47 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     setLocalDb(newDb);
     const updateGlobalDb = setDb || setDeliveryDb;
     if (updateGlobalDb) updateGlobalDb(newDb);
-    localStorage.setItem('erp_delivery', JSON.stringify(newDb));
 
-    // EXACT SYSTEM NAME FOR MEMON SERVICES APPLIED HERE
-    if (setReceiptsDb && formData.actualPayout && Number(formData.actualPayout) > 0 && formData.payoutDate) {
-      const receiptEntry = {
-        id: syncId,
-        type: 'Receipt',
-        date: formData.payoutDate,
-        mode: 'Bank',
-        bankName: 'Memon Services Ltd', 
-        category: 'Income / Revenue', 
-        account: formData.platform,
-        description: `Auto-Settlement: ${formData.platform} (${formatDate(formData.dateFrom)} to ${formatDate(formData.dateTo)})`,
-        amount: Number(formData.actualPayout),
-        fromBank: '',
-        toBank: '',
-        debitAccount: '',
-        creditAccount: ''
-      };
-      
-      const existingReceipt = activeReceiptsDb.find(r => r.id === syncId);
-      let updatedReceipts;
-      if (existingReceipt) {
-         updatedReceipts = activeReceiptsDb.map(r => r.id === syncId ? receiptEntry : r);
-      } else {
-         updatedReceipts = [...activeReceiptsDb, receiptEntry];
+    try {
+      await setDoc(doc(firebaseDb, "erp_delivery", recordToSave.id), recordToSave);
+
+      // EXACT SYSTEM NAME FOR MEMON SERVICES APPLIED HERE - SYNC TO FIREBASE RECEIPTS
+      if (setReceiptsDb && formData.actualPayout && Number(formData.actualPayout) > 0 && formData.payoutDate) {
+        const receiptEntry = {
+          id: syncId,
+          type: 'Receipt',
+          date: formData.payoutDate,
+          mode: 'Bank',
+          bankName: 'Memon Services Ltd', 
+          category: 'Income / Revenue', 
+          account: formData.platform,
+          description: `Auto-Settlement: ${formData.platform} (${formatDate(formData.dateFrom)} to ${formatDate(formData.dateTo)})`,
+          amount: Number(formData.actualPayout),
+          fromBank: '',
+          toBank: '',
+          debitAccount: '',
+          creditAccount: ''
+        };
+        
+        const existingReceipt = activeReceiptsDb.find(r => r.id === syncId);
+        let updatedReceipts;
+        if (existingReceipt) {
+           updatedReceipts = activeReceiptsDb.map(r => r.id === syncId ? receiptEntry : r);
+        } else {
+           updatedReceipts = [...activeReceiptsDb, receiptEntry];
+        }
+        setReceiptsDb(updatedReceipts);
+        
+        // Push auto-receipt directly to Firebase
+        await setDoc(doc(firebaseDb, "erp_receipts", syncId), receiptEntry);
       }
-      setReceiptsDb(updatedReceipts);
-      localStorage.setItem('erp_receipts', JSON.stringify(updatedReceipts));
-    }
 
-    setFormData(recordToSave);
+      alert(isNew ? `✅ ${formData.platform} settlement saved!` : `✅ ${formData.platform} settlement updated!`);
+      setFormData(recordToSave);
+    } catch (error) {
+      console.error("Error saving settlement to Firebase: ", error);
+      alert("Database Error: Could not save the settlement.");
+    }
   };
 
   const handleEdit = (row) => {
@@ -366,20 +402,26 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = (row) => {
+  const handleDelete = async (row) => {
     if (window.confirm("Are you sure you want to completely delete this settlement?")) {
       const newDb = localDb.filter(t => t.id !== row.id);
       
       setLocalDb(newDb);
       const updateGlobalDb = setDb || setDeliveryDb;
       if (updateGlobalDb) updateGlobalDb(newDb);
-      localStorage.setItem('erp_delivery', JSON.stringify(newDb));
       
-      // AUTO-DELETE FROM MEMON SERVICES LEDGER
-      if (setReceiptsDb && row.syncReceiptId) {
-         const newReceipts = activeReceiptsDb.filter(r => r.id !== row.syncReceiptId);
-         setReceiptsDb(newReceipts);
-         localStorage.setItem('erp_receipts', JSON.stringify(newReceipts));
+      try {
+        await deleteDoc(doc(firebaseDb, "erp_delivery", row.id));
+
+        // AUTO-DELETE FROM MEMON SERVICES LEDGER IN FIREBASE
+        if (setReceiptsDb && row.syncReceiptId) {
+           const newReceipts = activeReceiptsDb.filter(r => r.id !== row.syncReceiptId);
+           setReceiptsDb(newReceipts);
+           await deleteDoc(doc(firebaseDb, "erp_receipts", row.syncReceiptId));
+        }
+      } catch (error) {
+        console.error("Error deleting from Firebase: ", error);
+        alert("Database Error: Could not delete the settlement.");
       }
     }
   };
