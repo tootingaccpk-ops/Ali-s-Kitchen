@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../firebase'; // Adjust the path if your firebase.js is in a different folder
-import { collection, addDoc, getDocs, updateDoc, doc } from "firebase/firestore";
-import { Settings, Save, FileUp, FileSpreadsheet, FileText, XCircle, Users, UserPlus, Trash2, Key, Database, Download, UploadCloud } from 'lucide-react';
+import { db } from '../firebase'; 
+import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
+import { Settings, Save, FileUp, FileSpreadsheet, FileText, XCircle, Users, UserPlus, Trash2, Key, Database, Download, UploadCloud, Eye, EyeOff, ShieldAlert } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -42,6 +42,12 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [pendingAccId, setPendingAccId] = useState(null);
 
   const [users, setUsers] = useState([]);
+  const [visiblePasswords, setVisiblePasswords] = useState({}); // Track which passwords are toggled visible
+
+  // Check Current Logged-in User Role from Session Storage
+  const currentUsername = sessionStorage.getItem('erp_current_user') || '';
+  const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
+  const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
   // Firebase Cloud Fetch & LocalStorage Migration Hook
   useEffect(() => {
@@ -90,7 +96,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [newRole, setNewRole] = useState(''); 
   const [newPermissions, setNewPermissions] = useState(['Dashboard', 'Daily Sales']);
 
-  const isAdminOrOwner = newRole.toLowerCase() === 'admin' || newRole.toLowerCase() === 'owner';
+  const isAdminOrOwnerRole = newRole.toLowerCase() === 'admin' || newRole.toLowerCase() === 'owner';
 
   const handlePermissionToggle = (tab) => { 
     if (newPermissions.includes(tab)) { 
@@ -100,12 +106,16 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     } 
   };
 
+  const togglePasswordVisibility = (id) => {
+    setVisiblePasswords(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
   const handleAddUser = async () => {
     if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
     if (users.some(u => String(u.username).toLowerCase() === newUsername.toLowerCase())) return alert("A user with this username already exists.");
     if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
     
-    const finalPermissions = isAdminOrOwner ? ALL_TABS : newPermissions;
+    const finalPermissions = isAdminOrOwnerRole ? ALL_TABS : newPermissions;
     
     const newUserData = { 
       username: newUsername.trim(), 
@@ -132,22 +142,34 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     }
   };
 
-  const handleRemoveUser = (id) => { 
+  const handleRemoveUser = async (id) => { 
     if (users.length === 1) return alert("You cannot delete the last user in the system."); 
     if (window.confirm("Are you sure you want to delete this user?")) { 
-      const updatedUsers = users.filter(u => u.id !== id); 
-      setUsers(updatedUsers); 
-      localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); 
+      try {
+        await deleteDoc(doc(db, "erp_users", id));
+        const updatedUsers = users.filter(u => u.id !== id); 
+        setUsers(updatedUsers); 
+        alert("✅ User deleted successfully.");
+      } catch (error) {
+        console.error("Error deleting user from Firebase: ", error);
+        alert("Database Error: Could not delete user.");
+      }
     } 
   };
 
-  const handleChangePassword = (id) => { 
+  const handleChangePassword = async (id) => { 
     const newPass = window.prompt("Enter the new password for this user:"); 
     if (newPass && newPass.trim() !== "") { 
-      const updatedUsers = users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u); 
-      setUsers(updatedUsers); 
-      localStorage.setItem('erp_users', JSON.stringify(updatedUsers)); 
-      alert("✅ Password updated successfully."); 
+      try {
+        const userRef = doc(db, "erp_users", id);
+        await updateDoc(userRef, { password: newPass.trim() });
+        const updatedUsers = users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u); 
+        setUsers(updatedUsers); 
+        alert("✅ Password updated successfully in the cloud."); 
+      } catch (error) {
+        console.error("Error updating password in Firebase: ", error);
+        alert("Database Error: Could not update password.");
+      }
     } 
   };
 
@@ -246,7 +268,8 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     if (format === 'excel') {
       let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="3" style="font-size: 18px; font-weight: bold; border: none;">Naanstaap - Tooting</td></tr><tr><td colspan="3" style="font-size: 14px; font-weight: bold; border: none;">Chart of Accounts</td></tr><tr><td colspan="3" style="border: none;"></td></tr><tr>`;
       headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; }); html += `</tr>`;
-      dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; }); html += `</table></body></html>`;
+      dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; });
+      html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Chart_Of_Accounts.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
       try { const doc = new jsPDF('p', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Naanstaap - Tooting", 40, 40); doc.setFontSize(14); doc.text("Chart of Accounts", 40, 60); autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }}); doc.save(`Chart_Of_Accounts.pdf`); } catch (err) { alert("PDF Generation Failed."); }
@@ -305,6 +328,26 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const cardStyle = { background: '#ffffff', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)', border: '1px solid #e2e8f0', overflow: 'hidden' };
   const cardHeader = { padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(248, 250, 252, 0.5)' };
   const inputStyle = { padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', width: '100%', boxSizing: 'border-box' };
+
+  // STRICT ACCESS DENIED SCREEN FOR NON-ADMIN / NON-OWNER USERS
+  if (!isAuthorizedAdminOrOwner) {
+    return (
+      <div style={{ ...layout, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ background: '#ffffff', padding: '40px', borderRadius: '16px', border: '1px solid #fecaca', boxShadow: '0 10px 25px -5px rgba(239, 68, 68, 0.1)', textAlign: 'center', maxWidth: '450px', width: '100%' }}>
+          <div style={{ width: '64px', height: '64px', background: '#fee2e2', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
+            <ShieldAlert size={32} color="#dc2626" />
+          </div>
+          <h2 style={{ margin: '0 0 10px 0', fontSize: '22px', fontWeight: '800', color: '#991b1b' }}>Access Denied</h2>
+          <p style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#64748b', lineHeight: '1.5' }}>
+            You do not have administrative rights to access the <strong>System Setup</strong> tab. This area is restricted strictly to <strong>Admin</strong> and <strong>Owner</strong> roles.
+          </p>
+          <div style={{ fontSize: '12px', background: '#f8fafc', padding: '10px', borderRadius: '8px', color: '#475569', border: '1px solid #e2e8f0' }}>
+            Logged in as: <strong>{currentUsername || 'Standard User'}</strong> ({currentUserRole || 'Staff'})
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={layout}>
@@ -368,9 +411,18 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
               <tbody>
                 {users.map(user => {
                   const isMaster = user.role.toLowerCase() === 'admin' || user.role.toLowerCase() === 'owner';
+                  const isPasswordVisible = visiblePasswords[user.id];
                   return (
                     <tr key={user.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '12px 16px 12px 0', fontWeight: '700', fontSize: '14px' }}>{user.username}</td><td style={{ padding: '12px 16px 12px 0', color: '#475569', fontSize: '14px' }}>••••••••</td>
+                      <td style={{ padding: '12px 16px 12px 0', fontWeight: '700', fontSize: '14px' }}>{user.username}</td>
+                      <td style={{ padding: '12px 16px 12px 0', color: '#475569', fontSize: '14px', fontFamily: 'monospace' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>{isPasswordVisible ? user.password : '••••••••'}</span>
+                          <button onClick={() => togglePasswordVisibility(user.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: '2px', display: 'flex', alignItems: 'center' }} title={isPasswordVisible ? "Hide Password" : "View Password"}>
+                            {isPasswordVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </td>
                       <td style={{ padding: '12px 16px 12px 0' }}><span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '800', background: isMaster ? '#fefce8' : '#f1f5f9', color: isMaster ? '#854d0e' : '#475569' }}>{String(user.role || 'Staff').toUpperCase()}</span></td>
                       <td style={{ padding: '12px 16px 12px 0', fontSize: '11px', color: '#64748b', maxWidth: '200px', whiteSpace: 'normal' }}>{isMaster ? "Full Access" : (user.permissions || []).join(', ')}</td>
                       <td style={{ padding: '12px 0', textAlign: 'right' }}><div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}><button onClick={() => handleChangePassword(user.id)} style={{ padding: '8px', background: '#e0e7ff', color: '#7c3aed', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Change Password"><Key size={14} /></button><button onClick={() => handleRemoveUser(user.id)} style={{ padding: '8px', background: '#fee2e2', color: '#ef4444', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Delete User"><Trash2 size={14} /></button></div></td>
@@ -382,7 +434,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
             <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}><input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="New Username" style={{ ...inputStyle, flex: 1, minWidth: '150px' }} /><input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password" style={{ ...inputStyle, flex: 1, minWidth: '150px' }} /><input type="text" value={newRole} onChange={(e) => setNewRole(e.target.value)} placeholder="Role (e.g. Cashier, Owner)" style={{ ...inputStyle, flex: 1, minWidth: '150px' }} /></div>
-              <div style={{ marginBottom: '16px' }}><div style={{ fontSize: '12px', fontWeight: '700', marginBottom: '8px', color: '#475569' }}>Assign Tab Permissions:</div><div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>{ALL_TABS.map(tab => (<label key={tab} style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', color: isAdminOrOwner ? '#94a3b8' : '#0f172a', cursor: isAdminOrOwner ? 'not-allowed' : 'pointer' }}><input type="checkbox" checked={isAdminOrOwner ? true : newPermissions.includes(tab)} disabled={isAdminOrOwner} onChange={() => handlePermissionToggle(tab)} style={{ cursor: 'pointer' }} />{tab}</label>))}</div>{isAdminOrOwner && <div style={{ fontSize: '11px', color: '#854d0e', marginTop: '8px', fontWeight: '600' }}>*Admin and Owner roles automatically inherit full system access.</div>}</div>
+              <div style={{ marginBottom: '16px' }}><div style={{ fontSize: '12px', fontWeight: '700', marginBottom: '8px', color: '#475569' }}>Assign Tab Permissions:</div><div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>{ALL_TABS.map(tab => (<label key={tab} style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', color: isAdminOrOwnerRole ? '#94a3b8' : '#0f172a', cursor: isAdminOrOwnerRole ? 'not-allowed' : 'pointer' }}><input type="checkbox" checked={isAdminOrOwnerRole ? true : newPermissions.includes(tab)} disabled={isAdminOrOwnerRole} onChange={() => handlePermissionToggle(tab)} style={{ cursor: 'pointer' }} />{tab}</label>))}</div>{isAdminOrOwnerRole && <div style={{ fontSize: '11px', color: '#854d0e', marginTop: '8px', fontWeight: '600' }}>*Admin and Owner roles automatically inherit full system access.</div>}</div>
               <button onClick={handleAddUser} style={{ padding: '12px 24px', background: '#7c3aed', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'center' }}><UserPlus size={18} /> Add New User</button>
             </div>
           </div>
