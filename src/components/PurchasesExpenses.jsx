@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
 import { ShoppingCart, Plus, Trash2, Edit2, FileText, X, Search, FileSpreadsheet } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -95,6 +97,32 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
 
+  // MIGRATION SCRIPT FOR PURCHASES
+  useEffect(() => {
+    const migratePurchasesToFirebase = async () => {
+      const localData = JSON.parse(localStorage.getItem('erp_purchases'));
+      const isMigrated = localStorage.getItem('erp_purchases_migrated');
+      
+      if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
+        try {
+          console.log("Migrating Purchases to Firebase...");
+          const batch = writeBatch(firebaseDb);
+          localData.forEach(record => {
+            const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
+            const docRef = doc(firebaseDb, "erp_purchases", recordId);
+            batch.set(docRef, { ...record, id: recordId });
+          });
+          await batch.commit();
+          localStorage.setItem('erp_purchases_migrated', 'true');
+          console.log("Purchases Migration Complete!");
+        } catch (error) {
+          console.error("Migration failed: ", error);
+        }
+      }
+    };
+    migratePurchasesToFirebase();
+  }, []);
+
   const suppliers = accountsDb.filter(acc => String(acc.category).includes('Accounts Payable') || String(acc.category).includes('Supplier')).sort((a, b) => a.name.localeCompare(b.name));
   const purchasesAccounts = accountsDb.filter(acc => String(acc.category).toLowerCase().includes('cost of goods sold') || String(acc.category).toLowerCase().includes('cogs') || String(acc.category).toLowerCase().includes('purchase')).sort((a, b) => a.name.localeCompare(b.name));
   const expenseAccounts = accountsDb.filter(acc => String(acc.category).toLowerCase().includes('operating expense') || String(acc.category).toLowerCase().includes('expense') && !String(acc.category).toLowerCase().includes('cogs')).sort((a, b) => a.name.localeCompare(b.name));
@@ -152,28 +180,42 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!window.confirm(formData.id ? "Are you sure you want to update this invoice?" : "Are you sure you want to save this invoice?")) return; 
     
     const validLines = formData.lines.filter(l => l.account || l.gross || l.vat);
-    const invoiceRecord = { ...formData, lines: validLines.length > 0 ? validLines : [{ account: '', gross: 0, vat: 0 }], totalGross: totals.gross, totalVat: totals.vat, totalNet: totals.net };
+    const recordId = formData.id || Date.now().toString();
+    const invoiceRecord = { 
+      ...formData, 
+      id: recordId, 
+      lines: validLines.length > 0 ? validLines : [{ account: '', gross: 0, vat: 0 }], 
+      totalGross: totals.gross, 
+      totalVat: totals.vat, 
+      totalNet: totals.net 
+    };
 
     let newDb;
     if (formData.id) {
       newDb = displayDb.map(t => t.id === formData.id ? invoiceRecord : t).sort((a, b) => toDateNum(b.date) - toDateNum(a.date));
-      alert(`✅ Invoice updated successfully!`);
     } else {
-      invoiceRecord.id = Date.now().toString();
       newDb = [invoiceRecord, ...displayDb].sort((a, b) => toDateNum(b.date) - toDateNum(a.date));
-      alert(`✅ Invoice saved successfully!`);
     }
     
     if (setDb) setDb(newDb);
-    localStorage.setItem('erp_purchases', JSON.stringify(newDb)); 
-    setFormData(getInitialForm());
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    
+    try {
+      // Firebase Write
+      await setDoc(doc(firebaseDb, "erp_purchases", recordId), invoiceRecord);
+      
+      alert(formData.id ? `✅ Invoice updated successfully!` : `✅ Invoice saved successfully!`);
+      setFormData(getInitialForm());
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
+    } catch (error) {
+      console.error("Error saving purchase to Firebase: ", error);
+      alert("Database Error: Could not save the invoice.");
+    }
   };
 
   const handleEdit = (row) => {
@@ -181,11 +223,18 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this invoice?")) {
       const newDb = displayDb.filter(t => t.id !== id);
       if (setDb) setDb(newDb);
-      localStorage.setItem('erp_purchases', JSON.stringify(newDb)); 
+      
+      try {
+        // Firebase Delete
+        await deleteDoc(doc(firebaseDb, "erp_purchases", id));
+      } catch (error) {
+        console.error("Error deleting purchase from Firebase: ", error);
+        alert("Database Error: Could not delete the invoice.");
+      }
     }
   };
 

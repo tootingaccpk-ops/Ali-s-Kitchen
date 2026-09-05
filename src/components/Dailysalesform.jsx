@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { doc, writeBatch } from "firebase/firestore";
-import { db } from "../firebase"; // Adjust path if needed
+import { db as firebaseDb } from "../firebase"; // Renamed to avoid colliding with the 'db' prop
 
 const getToday = () => new Date().toISOString().split('T')[0];
 
@@ -46,7 +46,7 @@ const sheetTheme = {
 const labelTd = { border: `1px solid ${sheetTheme.border}`, padding: '6px 12px', fontSize: '12px', color: '#333', background: sheetTheme.labelBg, whiteSpace: 'nowrap', width: '40%' };
 const inputTd = { border: `1px solid ${sheetTheme.border}`, padding: '0', background: '#fff', width: '60%' };
 
-// SMART CELL INPUT (Formats on blur, plain number on focus)
+// SMART CELL INPUT
 const CellInput = ({ name, value, onChange, onKeyDown, type="number", placeholder="", align="right", inputRef=null, textColor="#000" }) => {
   const [isFocused, setIsFocused] = useState(false);
   
@@ -95,7 +95,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
   const [originalDate, setOriginalDate] = useState(null);
   const dateInputRef = useRef(null);
 
-  // MIGRATION SCRIPT: Moves existing localStorage sales to Firebase on first load
+  // MIGRATION SCRIPT
   useEffect(() => {
     const migrateToFirebase = async () => {
       const localData = JSON.parse(localStorage.getItem('erp_sales_db'));
@@ -104,9 +104,9 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
       if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
         try {
           console.log("Migrating Daily Sales to Firebase...");
-          const batch = writeBatch(db);
+          const batch = writeBatch(firebaseDb);
           localData.forEach(record => {
-            const docRef = doc(db, "erp_sales_db", record.date);
+            const docRef = doc(firebaseDb, "erp_sales_db", record.date);
             batch.set(docRef, record);
           });
           await batch.commit();
@@ -145,7 +145,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
        setFormData(prev => ({ ...prev, date: targetDate, openingTill: getOpeningTillForDate(targetDate) }));
        setOriginalDate(null);
     }
-  }, [editDate, activeDb]); // added activeDb so it syncs if Firebase pushes an update
+  }, [editDate, activeDb]); 
 
   const handleChange = (e) => {
     const { name, value, type } = e.target;
@@ -221,10 +221,9 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     if (setSalesDb) setSalesDb(fullyUpdatedDb);
     
     try {
-      // Pushing to Firebase using a writeBatch to safely update all recalculated days at once
-      const batch = writeBatch(db);
+      const batch = writeBatch(firebaseDb);
       fullyUpdatedDb.forEach(record => {
-        const docRef = doc(db, "erp_sales_db", record.date);
+        const docRef = doc(firebaseDb, "erp_sales_db", record.date);
         batch.set(docRef, record);
       });
       await batch.commit();
@@ -261,14 +260,12 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     if (setSalesDb) setSalesDb(fullyUpdatedDb);
     
     try {
-      const batch = writeBatch(db);
-      // Update the remaining recalculated records
+      const batch = writeBatch(firebaseDb);
       fullyUpdatedDb.forEach(record => {
-        const docRef = doc(db, "erp_sales_db", record.date);
+        const docRef = doc(firebaseDb, "erp_sales_db", record.date);
         batch.set(docRef, record);
       });
-      // Delete the specific document from Firebase
-      batch.delete(doc(db, "erp_sales_db", targetDate));
+      batch.delete(doc(firebaseDb, "erp_sales_db", targetDate));
       await batch.commit();
 
       alert("✅ Daily Sales Record Deleted!");
