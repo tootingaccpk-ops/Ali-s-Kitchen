@@ -69,70 +69,43 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // FIREBASE REAL-TIME SYNC BLOCK FOR ALL COLLECTIONS
+  // SAFE INITIALIZATION & TRANSACTION CLOUD SYNC BLOCK
   useEffect(() => {
     try {
+      setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
+      setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
       setCategoriesMap(JSON.parse(localStorage.getItem('erp_categories')) || {});
     } catch (e) {
-      console.error("Error loading categories from localStorage", e);
+      console.error("Error loading DB from localStorage", e);
     }
 
-    // Real-time listeners for all cloud databases
+    // Real-time listeners for core transaction databases only to protect chart of accounts
     const unsubscribeSales = onSnapshot(collection(db, "erp_sales_db"), (snapshot) => {
       const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSalesDb(salesData);
+      if (salesData.length > 0) setSalesDb(salesData);
     });
 
     const unsubscribeReceipts = onSnapshot(collection(db, "erp_receipts"), (snapshot) => {
       const receiptsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setReceiptsDb(receiptsData);
+      if (receiptsData.length > 0) setReceiptsDb(receiptsData);
     });
 
     const unsubscribePurchases = onSnapshot(collection(db, "erp_purchases"), (snapshot) => {
       const purchasesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setPurchasesDb(purchasesData);
-    });
-
-    const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), async (snapshot) => {
-      const accountsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // If cloud accounts are missing or empty, sync defaults to Firestore
-      if (accountsData.length === 0) {
-        const defaultAccounts = [
-          { id: '1', name: 'Memon Services Ltd', category: 'Bank Account / Cash in Hand', balance: 0 },
-          { id: '2', name: 'Khanani Management', category: 'Bank Account / Cash in Hand', balance: 0 },
-          { id: '3', name: 'LK Associates', category: 'Bank Account / Cash in Hand', balance: 0 },
-          { id: '4', name: 'Safe Box (Main Cash)', category: 'Safe Box (Main Cash)', balance: 0 },
-          { id: '5', name: 'Physical Till Drawer', category: 'Physical Till Float', balance: 0 },
-          { id: '6', name: 'Cash in Hand', category: 'Bank Account / Cash in Hand', balance: 0 }
-        ];
-        setAccountsDb(defaultAccounts);
-      } else {
-        setAccountsDb(accountsData);
-      }
-    });
-
-    const unsubscribeDelivery = onSnapshot(collection(db, "erp_delivery"), (snapshot) => {
-      const deliveryData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (deliveryData.length > 0) {
-        setDeliveryDb(deliveryData);
-        localStorage.setItem('erp_delivery', JSON.stringify(deliveryData));
-      } else {
-        setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
-      }
+      if (purchasesData.length > 0) setPurchasesDb(purchasesData);
     });
 
     return () => {
       unsubscribeSales();
       unsubscribeReceipts();
       unsubscribePurchases();
-      unsubscribeAccounts();
-      unsubscribeDelivery();
     };
   }, []);
 
-  // Update local storage mappings
+  // Save local states safely
+  useEffect(() => { if (accountsDb.length > 0) localStorage.setItem('erp_accounts', JSON.stringify(accountsDb)); }, [accountsDb]);
   useEffect(() => { if (Object.keys(categoriesMap).length > 0) localStorage.setItem('erp_categories', JSON.stringify(categoriesMap)); }, [categoriesMap]);
+  useEffect(() => { if (deliveryDb.length > 0) localStorage.setItem('erp_delivery', JSON.stringify(deliveryDb)); }, [deliveryDb]);
 
   if (!isAuthenticated) {
     return <LoginScreen onLoginSuccess={(user) => {
