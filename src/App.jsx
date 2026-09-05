@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore'; 
+import { collection, onSnapshot, getDocs, deleteDoc, doc } from 'firebase/firestore'; 
 import { db } from './firebase'; 
 import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale } from 'lucide-react';
 import PurchasesExpenses from './components/PurchasesExpenses.jsx';
@@ -69,7 +69,7 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // REAL-TIME FIREBASE CLOUD SYNC FOR ACCOUNTS & TRANSACTIONS
+  // AUTOMATIC CLOUD DEDUPLICATION & REAL-TIME SYNC
   useEffect(() => {
     try {
       setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
@@ -78,11 +78,54 @@ function App() {
       console.error("Error loading DB from localStorage", e);
     }
 
-    // Real-time listener for Chart of Accounts from Cloud
+    // Auto-clean duplicates from Firestore on startup
+    const cleanCloudDuplicates = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "erp_accounts"));
+        const seenNames = new Set();
+        const deletions = [];
+
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const nameKey = String(data.name || '').trim().toLowerCase();
+          if (nameKey) {
+            if (seenNames.has(nameKey)) {
+              deletions.push(deleteDoc(doc(db, "erp_accounts", docSnap.id)));
+            } else {
+              seenNames.add(nameKey);
+            }
+          }
+        });
+
+        if (deletions.length > 0) {
+          await Promise.all(deletions);
+          console.log(`🧹 Automatically cleaned ${deletions.length} duplicate account entries from Firebase.`);
+        }
+      } catch (err) {
+        console.error("Error cleaning cloud duplicates:", err);
+      }
+    };
+    cleanCloudDuplicates();
+
+    // Real-time listener for Chart of Accounts
     const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), (snapshot) => {
-      const cloudAccounts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const cloudAccounts = [];
+      const cloudCategories = {};
+      const seenNames = new Set();
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const nameKey = String(data.name || '').trim().toLowerCase();
+        if (data.name && !seenNames.has(nameKey)) {
+          seenNames.add(nameKey);
+          cloudAccounts.push({ id: doc.id, ...data });
+          cloudCategories[data.name] = data.category || 'Equity';
+        }
+      });
+
       if (cloudAccounts.length > 0) {
         setAccountsDb(cloudAccounts);
+        setCategoriesMap(cloudCategories);
       }
     });
 
@@ -110,7 +153,6 @@ function App() {
     };
   }, []);
 
-  // Save local states safely
   useEffect(() => { if (Object.keys(categoriesMap).length > 0) localStorage.setItem('erp_categories', JSON.stringify(categoriesMap)); }, [categoriesMap]);
   useEffect(() => { if (deliveryDb.length > 0) localStorage.setItem('erp_delivery', JSON.stringify(deliveryDb)); }, [deliveryDb]);
 
