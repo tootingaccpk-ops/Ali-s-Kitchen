@@ -1,31 +1,59 @@
 import React, { useState } from 'react';
+import { db } from '../firebase'; // Adjust path if needed
+import { collection, getDocs, addDoc } from "firebase/firestore";
 import { Lock, User, ShieldCheck } from 'lucide-react';
 
 export default function LoginScreen({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    
-    // Fetch users or create the default master admin if none exist
-    const savedUsers = JSON.parse(localStorage.getItem('erp_users')) || [
-      { id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup'] }
-    ];
+    setError('');
+    setLoading(true);
 
-    const validUser = savedUsers.find(
-      u => u.username.toLowerCase() === username.toLowerCase() && u.password === password
-    );
+    try {
+      // Fetch users live from Firebase Firestore
+      const querySnapshot = await getDocs(collection(db, "erp_users"));
+      let savedUsers = [];
+      querySnapshot.forEach((doc) => {
+        savedUsers.push({ id: doc.id, ...doc.data() });
+      });
 
-    if (validUser) {
-      sessionStorage.setItem('erp_session_active', 'true');
-      sessionStorage.setItem('erp_current_user', validUser.username);
-      sessionStorage.setItem('erp_current_role', validUser.role);
-      sessionStorage.setItem('erp_user_permissions', JSON.stringify(validUser.permissions || []));
-      onLoginSuccess(validUser);
-    } else {
-      setError('Invalid Username or Password');
+      // If no users exist in the cloud yet, create the default master admin
+      if (savedUsers.length === 0) {
+        const defaultAdmin = {
+          username: 'admin',
+          password: 'password123',
+          role: 'Admin',
+          permissions: ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup'],
+          createdAt: new Date()
+        };
+        const docRef = await addDoc(collection(db, "erp_users"), defaultAdmin);
+        savedUsers.push({ id: docRef.id, ...defaultAdmin });
+      }
+
+      // Validate credentials against cloud records
+      const validUser = savedUsers.find(
+        u => String(u.username).toLowerCase() === username.trim().toLowerCase() && String(u.password) === password.trim()
+      );
+
+      if (validUser) {
+        sessionStorage.setItem('erp_session_active', 'true');
+        sessionStorage.setItem('erp_current_user', validUser.username);
+        sessionStorage.setItem('erp_current_role', validUser.role);
+        sessionStorage.setItem('erp_user_permissions', JSON.stringify(validUser.permissions || []));
+        onLoginSuccess(validUser);
+      } else {
+        setError('Invalid Username or Password');
+      }
+    } catch (err) {
+      console.error("Login authentication error: ", err);
+      setError('Database connection error. Please check your internet.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -78,8 +106,8 @@ export default function LoginScreen({ onLoginSuccess }) {
             </div>
           </div>
 
-          <button type="submit" style={{ marginTop: '10px', background: '#2563eb', color: '#ffffff', border: 'none', padding: '14px', borderRadius: '8px', fontSize: '15px', fontWeight: '800', cursor: 'pointer', transition: 'background 0.2s', width: '100%' }}>
-            Secure Login
+          <button type="submit" disabled={loading} style={{ marginTop: '10px', background: loading ? '#94a3b8' : '#2563eb', color: '#ffffff', border: 'none', padding: '14px', borderRadius: '8px', fontSize: '15px', fontWeight: '800', cursor: loading ? 'not-allowed' : 'pointer', transition: 'background 0.2s', width: '100%' }}>
+            {loading ? 'Authenticating...' : 'Secure Login'}
           </button>
         </form>
       </div>
