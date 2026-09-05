@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
 import { ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, Wallet, Landmark, Trash2, Edit2, FileText, Search, XCircle, Filter, FileSpreadsheet, BookOpen, Plus } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -75,6 +77,32 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
   const [newCatData, setNewCatData] = useState({ name: '', type: 'Expense' });
   const [showAccModal, setShowAccModal] = useState(false);
   const [newAccData, setNewAccData] = useState({ name: '', category: '' });
+
+  // MIGRATION SCRIPT FOR RECEIPTS
+  useEffect(() => {
+    const migrateReceiptsToFirebase = async () => {
+      const localData = JSON.parse(localStorage.getItem('erp_receipts'));
+      const isMigrated = localStorage.getItem('erp_receipts_migrated');
+      
+      if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
+        try {
+          console.log("Migrating Receipts & Payments to Firebase...");
+          const batch = writeBatch(firebaseDb);
+          localData.forEach(record => {
+            const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
+            const docRef = doc(firebaseDb, "erp_receipts", recordId);
+            batch.set(docRef, { ...record, id: recordId });
+          });
+          await batch.commit();
+          localStorage.setItem('erp_receipts_migrated', 'true');
+          console.log("Receipts Migration Complete!");
+        } catch (error) {
+          console.error("Migration failed: ", error);
+        }
+      }
+    };
+    migrateReceiptsToFirebase();
+  }, []);
 
   const bankAccounts = accountsDb.filter(acc => { const cat = String(acc.category || '').toLowerCase(); return cat.includes('bank') || cat.includes('cash') || cat.includes('safe') || cat.includes('till'); }).sort((a, b) => a.name.localeCompare(b.name));
   const allCategories = useMemo(() => {
@@ -166,7 +194,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const transaction = { ...formData };
 
@@ -184,27 +212,43 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
       if (cleanLines.some(l => !l.account)) return alert("Please select an account for all lines that have amounts.");
       
       transaction.lines = cleanLines;
-      transaction.amount = dTot; // Used for summary display
+      transaction.amount = dTot; 
     } else {
       if (formData.mode === 'Bank' && !formData.bankName) return alert("Please select a Bank Account.");
       if (!formData.account) return alert("Please select a specific Account Ledger.");
       transaction.amount = Number(formData.amount);
     }
 
-    if (formData.id) {
-      setDb(prev => prev.map(t => t.id === formData.id ? transaction : t).sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date))));
-      alert(`✅ ${formData.type === 'Journal' ? 'Compound JV' : formData.type} updated successfully!`);
+    const isNew = !formData.id;
+    const recordId = formData.id || Date.now().toString();
+    transaction.id = recordId;
+
+    if (isNew) {
+      if (setDb) setDb(prev => [transaction, ...prev].sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date))));
     } else {
-      transaction.id = Date.now().toString();
-      setDb(prev => [transaction, ...prev].sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date))));
-      alert(`✅ ${formData.type === 'Journal' ? 'Compound JV' : formData.type} of £${fmtMoney(transaction.amount)} saved successfully!`);
+      if (setDb) setDb(prev => prev.map(t => t.id === formData.id ? transaction : t).sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date))));
     }
     
-    setFormData({ ...initialForm, lines: [{ id: Date.now(), account: '', debit: '', credit: '', description: '' }, { id: Date.now() + 1, account: '', debit: '', credit: '', description: '' }] });
+    try {
+      await setDoc(doc(firebaseDb, "erp_receipts", recordId), transaction);
+      alert(`✅ ${formData.type === 'Journal' ? 'Compound JV' : formData.type} ${isNew ? 'saved' : 'updated'} successfully!`);
+      setFormData({ ...initialForm, lines: [{ id: Date.now(), account: '', debit: '', credit: '', description: '' }, { id: Date.now() + 1, account: '', debit: '', credit: '', description: '' }] });
+    } catch (error) {
+      console.error("Error saving receipt to Firebase: ", error);
+      alert("Database Error: Could not save the transaction.");
+    }
   };
 
-  const handleDelete = (id) => {
-    if (window.confirm("Are you sure you want to delete this transaction?")) { setDb(prev => prev.filter(t => t.id !== id)); }
+  const handleDelete = async (id) => {
+    if (window.confirm("Are you sure you want to delete this transaction?")) { 
+      if (setDb) setDb(prev => prev.filter(t => t.id !== id)); 
+      try {
+        await deleteDoc(doc(firebaseDb, "erp_receipts", id));
+      } catch (error) {
+        console.error("Error deleting from Firebase: ", error);
+        alert("Database Error: Could not delete the transaction.");
+      }
+    }
   };
 
   const filteredDb = useMemo(() => {
