@@ -69,17 +69,24 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // SAFE INITIALIZATION & TRANSACTION CLOUD SYNC BLOCK
+  // REAL-TIME FIREBASE CLOUD SYNC FOR ACCOUNTS & TRANSACTIONS
   useEffect(() => {
     try {
-      setAccountsDb(JSON.parse(localStorage.getItem('erp_accounts')) || []);
       setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
       setCategoriesMap(JSON.parse(localStorage.getItem('erp_categories')) || {});
     } catch (e) {
       console.error("Error loading DB from localStorage", e);
     }
 
-    // Real-time listeners for core transaction databases only to protect chart of accounts
+    // Real-time listener for Chart of Accounts from Cloud
+    const unsubscribeAccounts = onSnapshot(collection(db, "erp_accounts"), (snapshot) => {
+      const cloudAccounts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      if (cloudAccounts.length > 0) {
+        setAccountsDb(cloudAccounts);
+      }
+    });
+
+    // Real-time listeners for core transaction databases
     const unsubscribeSales = onSnapshot(collection(db, "erp_sales_db"), (snapshot) => {
       const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       if (salesData.length > 0) setSalesDb(salesData);
@@ -96,6 +103,7 @@ function App() {
     });
 
     return () => {
+      unsubscribeAccounts();
       unsubscribeSales();
       unsubscribeReceipts();
       unsubscribePurchases();
@@ -103,7 +111,6 @@ function App() {
   }, []);
 
   // Save local states safely
-  useEffect(() => { if (accountsDb.length > 0) localStorage.setItem('erp_accounts', JSON.stringify(accountsDb)); }, [accountsDb]);
   useEffect(() => { if (Object.keys(categoriesMap).length > 0) localStorage.setItem('erp_categories', JSON.stringify(categoriesMap)); }, [categoriesMap]);
   useEffect(() => { if (deliveryDb.length > 0) localStorage.setItem('erp_delivery', JSON.stringify(deliveryDb)); }, [deliveryDb]);
 
