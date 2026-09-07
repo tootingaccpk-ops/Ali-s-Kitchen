@@ -248,7 +248,7 @@ export default function Dashboard({ db = [], accountsDb = [], receiptsDb = [], d
       
       pdf.setFontSize(16);
       pdf.setFont("helvetica", "bold");
-      pdf.text("Naanstaap Tooting - Dashboard Snapshot", pageWidth / 2, 15, { align: 'center' });
+      pdf.text("Ali's Kitchen  - Dashboard Snapshot", pageWidth / 2, 15, { align: 'center' });
       
       pdf.addImage(imgData, 'PNG', xOffset, yOffset, finalWidth, finalHeight);
       pdf.save(`Dashboard_Export_${getToday()}.pdf`);

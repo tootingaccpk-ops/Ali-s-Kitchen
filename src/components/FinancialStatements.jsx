@@ -70,7 +70,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
 
   const handleExport = (format, reportTitle, headers, dataRows, orientation = 'l') => {
     if (!dataRows || dataRows.length === 0) return alert("No data available to export for this date range.");
-    const businessName = "Naanstaap - Tooting"; 
+    const businessName = "Ali's Kitchen - "; 
     const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; 
     const filename = `${reportTitle.replace(/\s+/g, '_')}_${dateFrom}`;
     

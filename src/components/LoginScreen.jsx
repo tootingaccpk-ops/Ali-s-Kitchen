@@ -65,7 +65,7 @@ export default function LoginScreen({ onLoginSuccess }) {
           <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#eff6ff', padding: '16px', borderRadius: '50%', marginBottom: '16px' }}>
             <ShieldCheck size={32} color="#2563eb" />
           </div>
-          <h1 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>Naanstaap ERP</h1>
+          <h1 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>Ali's Kitchen ERP</h1>
           <p style={{ margin: 0, fontSize: '14px', color: '#64748b', fontWeight: '500' }}>Operations & Finance Portal</p>
         </div>
 

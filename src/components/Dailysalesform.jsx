@@ -401,7 +401,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th colSpan="2" style={{ background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, padding: '8px 12px', textAlign: 'left', border: `1px solid ${sheetTheme.border}`, fontSize: '14px', fontWeight: '700' }}>Delivery Platforms Inputs</th></tr></thead>
                 <tbody>
-                  {[ { key: 'uber', label: 'Uber Eats' }, { key: 'deliveroo', label: 'Deliveroo' }, { key: 'justEat', label: 'Just Eat' }, { key: 'app4', label: 'App4' }, { key: 'otherDel', label: 'Tooting' } ].map(plat => (
+                  {[ { key: 'uber', label: 'Uber Eats' }, { key: 'deliveroo', label: 'Deliveroo' }, { key: 'justEat', label: 'Just Eat' }, { key: 'app4', label: 'App4' }, { key: 'otherDel', label: '' } ].map(plat => (
                     <tr key={plat.key}><td style={labelTd}>{plat.label} (£)</td><td style={inputTd}><CellInput name={plat.key} value={formData[plat.key]} onChange={handleChange} onKeyDown={handleKeyDown} /></td></tr>
                   ))}
                   <tr><td style={{...labelTd, fontWeight: '700'}}>Total Delivery Net (£)</td><td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={fmtMoney(totalDelivery)} bold={true} /></td></tr>

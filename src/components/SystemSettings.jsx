@@ -271,7 +271,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     const backupData = { version: '1.0', exportedAt: new Date().toISOString(), data: {} };
     ERP_STORAGE_KEYS.forEach(key => { try { const item = localStorage.getItem(key); backupData.data[key] = item ? JSON.parse(item) : []; } catch (e) { backupData.data[key] = []; } });
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); const dateStr = new Date().toISOString().split('T')[0];
-    a.href = url; a.download = `Naanstaap_ERP_Backup_${dateStr}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    a.href = url; a.download = `Ali's Kitchen_ERP_Backup_${dateStr}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
   const handleRestore = (e) => {
@@ -302,13 +302,13 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     const headers = ['Account / Supplier Name', 'Category Type', 'Opening Balance (£)'];
     const dataRows = sortedAccounts.map(acc => [acc.name || '-', acc.category || '-', `£ ${Number(acc.balance || 0).toFixed(2)}`]);
     if (format === 'excel') {
-      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="3" style="font-size: 18px; font-weight: bold; border: none;">Naanstaap - Tooting</td></tr><tr><td colspan="3" style="font-size: 14px; font-weight: bold; border: none;">Chart of Accounts</td></tr><tr><td colspan="3" style="border: none;"></td></tr><tr>`;
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="3" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen - </td></tr><tr><td colspan="3" style="font-size: 14px; font-weight: bold; border: none;">Chart of Accounts</td></tr><tr><td colspan="3" style="border: none;"></td></tr><tr>`;
       headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; }); html += `</tr>`;
       dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; });
       html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Chart_Of_Accounts.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
-      try { const doc = new jsPDF('p', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Naanstaap - Tooting", 40, 40); doc.setFontSize(14); doc.text("Chart of Accounts", 40, 60); autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }}); doc.save(`Chart_Of_Accounts.pdf`); } catch (err) { alert("PDF Generation Failed."); }
+      try { const doc = new jsPDF('p', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen - ", 40, 40); doc.setFontSize(14); doc.text("Chart of Accounts", 40, 60); autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }}); doc.save(`Chart_Of_Accounts.pdf`); } catch (err) { alert("PDF Generation Failed."); }
     }
   };
 

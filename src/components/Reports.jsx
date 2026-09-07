@@ -69,7 +69,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
 
   const handleExport = (format, reportTitle, headers, dataRows, totalsRow = null, orientation = 'p') => {
     if (!dataRows || dataRows.length === 0) return alert("No data available to export for this date range.");
-    const businessName = "Naanstaap - Tooting"; const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; const filename = `${reportTitle.replace(/\s+/g, '_')}_${dateFrom}`;
+    const businessName = "Ali's Kitchen - "; const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; const filename = `${reportTitle.replace(/\s+/g, '_')}_${dateFrom}`;
     const isTextCol = (h, i) => ['Date', 'Account', 'Supplier Name', 'Supplier / Ref', 'Source', 'Platform', 'Period', 'Payout Date', 'Notes / Reason', 'Expense Category', 'Ref', 'Description', 'Contra A/C', 'Reasons', 'Notes', 'Supplier'].includes(h) || i === 0;
 
     if (format === 'excel') {
