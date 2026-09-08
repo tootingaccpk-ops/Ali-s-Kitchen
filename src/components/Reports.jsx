@@ -59,8 +59,11 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
   }, [initialSubTab]);
 
   const actualDeliveryDb = useMemo(() => { try { return deliveryDb.length > 0 ? deliveryDb : JSON.parse(localStorage.getItem('erp_delivery') || '[]'); } catch (e) { return []; } }, [deliveryDb]);
-
   const sortedAccountsDb = useMemo(() => { return [...accountsDb].sort((a, b) => (a.name || '').localeCompare(b.name || '')); }, [accountsDb]);
+  
+  // Get active account name for General Ledger PDF/Excel headers
+  const selectedAccountObj = useMemo(() => sortedAccountsDb.find(a => a.id === selectedLedgerId), [sortedAccountsDb, selectedLedgerId]);
+  const selectedAccountName = selectedAccountObj ? selectedAccountObj.name : 'All Accounts';
 
   const deliveryPlatformsList = useMemo(() => { 
     const plats = Array.from(new Set(['Deliveroo', 'Uber Eats', 'Just Eat', 'App4', ...actualDeliveryDb.map(d => d.platform).filter(Boolean)]));
@@ -69,7 +72,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
 
   const handleExport = (format, reportTitle, headers, dataRows, totalsRow = null, orientation = 'p') => {
     if (!dataRows || dataRows.length === 0) return alert("No data available to export for this date range.");
-    const businessName = "Ali's Kitchen - "; const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; const filename = `${reportTitle.replace(/\s+/g, '_')}_${dateFrom}`;
+    const businessName = "Naanstaap - Tooting"; const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; const filename = `${reportTitle.replace(/\s+/g, '_')}_${dateFrom}`;
     const isTextCol = (h, i) => ['Date', 'Account', 'Supplier Name', 'Supplier / Ref', 'Source', 'Platform', 'Period', 'Payout Date', 'Notes / Reason', 'Expense Category', 'Ref', 'Description', 'Contra A/C', 'Reasons', 'Notes', 'Supplier'].includes(h) || i === 0;
 
     if (format === 'excel') {
@@ -82,7 +85,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       try {
         const doc = new jsPDF(orientation, 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text(businessName, orientation === 'l' ? 15 : 40, 40); doc.setFontSize(14); doc.text(reportTitle, orientation === 'l' ? 15 : 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(period, orientation === 'l' ? 15 : 40, 75);
         const tableData = dataRows.map(row => headers.map(h => row[h] !== undefined && row[h] !== null ? row[h] : '')); if (totalsRow) tableData.push(headers.map(h => totalsRow[h] !== undefined && totalsRow[h] !== null ? totalsRow[h] : ''));
-        autoTable(doc, { startY: 90, head: [headers], body: tableData, theme: 'grid', margin: { left: orientation === 'l' ? 15 : 40, right: orientation === 'l' ? 15 : 40 }, headStyles: { fillColor: [15, 23, 42], fontSize: orientation === 'l' ? 6.5 : 10, cellPadding: orientation === 'l' ? 3 : 6 }, styles: { fontSize: orientation === 'l' ? 6.5 : 9, cellPadding: orientation === 'l' ? 3 : 6, overflow: 'linebreak' }, didParseCell: (data) => { const header = headers[data.column.index] || ''; const isText = isTextCol(header, data.column.index); data.cell.styles.halign = isText ? 'left' : 'right'; const isFooter = totalsRow && data.row.index === tableData.length - 1; if (isFooter) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [241, 245, 249]; data.cell.styles.textColor = [15, 23, 42]; } const rawValue = data.cell.raw; if (typeof rawValue === 'string' && rawValue !== '' && rawValue !== '-') { const numMatch = rawValue.match(/[-+]?£?\s?[0-9,]+(\.[0-9]+)?/); const isNumeric = !!numMatch; const parsedNum = isNumeric ? parseFloat(rawValue.replace(/[^0-9.-]/g, '')) : null; if (header.toLowerCase().includes('variance')) { data.cell.styles.fontStyle = 'bold'; if (rawValue.includes('EXACT MATCH') || (parsedNum !== null && Math.abs(parsedNum) < 0.01)) { data.cell.styles.textColor = [5, 150, 105]; } else if (parsedNum > 0 || rawValue.includes('+')) { data.cell.styles.fillColor = [253, 224, 71]; data.cell.styles.textColor = [0, 0, 0]; } else if (parsedNum < 0 || rawValue.includes('-')) { data.cell.styles.fillColor = [239, 68, 68]; data.cell.styles.textColor = [255, 255, 255]; } } else if (['comm', 'vat', 'adv', 'serv', 'refund', 'deduction', 'adj (-)'].some(k => header.toLowerCase().includes(k))) { if (isNumeric && parsedNum !== 0) data.cell.styles.textColor = [220, 38, 38]; } else if (['net sales', 'actual', 'adj (+)', 'expected', 'net cash', 'net card', 'net payout'].some(k => header.toLowerCase().includes(k))) { if (isNumeric && parsedNum !== 0 && !isFooter) data.cell.styles.textColor = [5, 150, 105]; } } } }); doc.save(`${filename}.pdf`);
+        autoTable(doc, { startY: 90, head: [headers], body: tableData, theme: 'grid', margin: { left: orientation === 'l' ? 15 : 40, right: orientation === 'l' ? 15 : 40 }, headStyles: { fillColor: [15, 23, 42], fontSize: orientation === 'l' ? 6.5 : 10, cellPadding: orientation === 'l' ? 3 : 6 }, styles: { fontSize: orientation === 'l' ? 6.5 : 9, cellPadding: orientation === 'l' ? 3 : 6, overflow: 'linebreak' }, didParseCell: (data) => { const header = headers[data.column.index] || ''; const isText = isTextCol(header, data.column.index); data.cell.styles.halign = isText ? 'left' : 'right'; const isFooter = totalsRow && data.row.index === tableData.length - 1; if (isFooter) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [241, 245, 249]; data.cell.styles.textColor = [15, 23, 42]; } } }); doc.save(`${filename}.pdf`);
       } catch (err) { alert("PDF Generation Failed."); }
     }
   };
@@ -149,13 +152,9 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
     if (!acc) return [];
     let trans = [];
     
-    // Strict trimming for exact matching
     const accName = (acc.name || '').trim();
     const isCashLedger = accName === 'Safe Box (Main Cash)' || accName === 'Cash in Hand' || acc.category === 'Safe Box (Main Cash)';
 
-    // ==========================================
-    // 1. STRICT VAT ROUTING (PREVENTS BLEEDING)
-    // ==========================================
     if (accName === 'VAT Output (Sales)') {
         salesDb.forEach(s => {
             const vatVal = Number(s.vatAmount) || Number(s.totalVat) || Number(s.vatCollected) || Number(s.vat) || 0;
@@ -181,9 +180,6 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
         });
     }
 
-    // ==========================================
-    // 2. RECEIPTS, PAYMENTS & JVs
-    // ==========================================
     receiptsDb.forEach(r => {
       const rDate = normalizeDate(r.date);
       if (r.type === 'Transfer' && String(r.description).includes('Auto-Collected')) return;
@@ -227,9 +223,6 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       }
     });
 
-    // ==========================================
-    // 3. PURCHASES & EXPENSES
-    // ==========================================
     purchasesDb.forEach(p => {
       const pDate = normalizeDate(p.date);
       if ((p.supplier || '').trim() === accName) trans.push({ Date: pDate, Ref: p.refNo || `INV-${(p.id||'').slice(-4)}`, Description: p.description || 'Invoice Received', Contra: 'Multiple Categories', Debit: 0, Credit: Number(p.totalGross) });
@@ -240,9 +233,6 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       });
     });
 
-    // ==========================================
-    // 4. INCOME (SALES & POSITIVE PLATFORM ADJS)
-    // ==========================================
     if (categoriesMap[acc.category] === 'Income') {
       salesDb.forEach(s => {
         const erpTotalGross = (Number(s.cashGross) || 0) + (Number(s.m1Gross) || 0) + (Number(s.m2Gross) || 0) + (Number(s.m3Gross) || 0) + (Number(s.uber) || 0) + (Number(s.deliveroo) || 0) + (Number(s.justEat) || 0) + (Number(s.app4) || 0) + (Number(s.otherDel) || 0);
@@ -253,9 +243,6 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       actualDeliveryDb.forEach(d => { if (Number(d.adjustmentPositive) > 0) trans.push({ Date: normalizeDate(d.payoutDate || d.dateTo || d.dateFrom || getToday()), Ref: 'ADJ+', Description: `Platform Adj: ${d.adjustmentPositiveReason || 'Positive Adj'}`, Contra: d.platform, Debit: 0, Credit: Number(d.adjustmentPositive) }); });
     }
     
-    // ==========================================
-    // 5. SALES TILLS & CARD SETTLEMENTS
-    // ==========================================
     salesDb.forEach(s => {
       const sDate = normalizeDate(s.date);
       const rawCDate = s.safeBoxDate || s.safeBoxColDate;
@@ -292,12 +279,9 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       }
     });
 
-    // ==========================================
-    // 6. DELIVERY PLATFORMS (FEES & PAYOUTS)
-    // ==========================================
     actualDeliveryDb.forEach(d => {
       if (!d.platform) return;
-      if (accName.includes('VAT Input')) return; // VAT is already handled securely at the top!
+      if (accName.includes('VAT Input')) return; 
       
       if (d.platform.toLowerCase().replace(/\s+/g, '').includes(accName.toLowerCase().replace(/\s+/g, ''))) {
         const settleDate = normalizeDate(d.payoutDate || d.dateTo || d.dateFrom || getToday());
@@ -437,10 +421,6 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
     }).filter(Boolean);
   }, [baseDeliveryWeeklyData]);
 
-  const vatPlatsList = useMemo(() => { 
-    return Array.from(new Set(vatDeliveryData.map(d => d.Platform))).sort((a,b)=>a.localeCompare(b));
-  }, [vatDeliveryData]);
-
   const deliveryTotals = useMemo(() => {
     return deliveryWeeklyData.reduce((acc, row) => ({
       GrossSales: acc.GrossSales + (parseFloat(String(row.GrossSales).replace(/[^0-9.-]/g, '')) || 0), PlatformGross: acc.PlatformGross + (parseFloat(String(row.PlatformGross).replace(/[^0-9.-]/g, '')) || 0), Commission: acc.Commission + (parseFloat(String(row.Commission).replace(/[^0-9.-]/g, '')) || 0), VatOnCommission: acc.VatOnCommission + (parseFloat(String(row.VatOnCommission).replace(/[^0-9.-]/g, '')) || 0), Advertisement: acc.Advertisement + (parseFloat(String(row.Advertisement).replace(/[^0-9.-]/g, '')) || 0), VatOnAdvertisement: acc.VatOnAdvertisement + (parseFloat(String(row.VatOnAdvertisement).replace(/[^0-9.-]/g, '')) || 0), ServiceCharges: acc.ServiceCharges + (parseFloat(String(row.ServiceCharges).replace(/[^0-9.-]/g, '')) || 0), Refunds: acc.Refunds + (parseFloat(String(row.Refunds).replace(/[^0-9.-]/g, '')) || 0), AdjustmentPos: acc.AdjustmentPos + (parseFloat(String(row.AdjustmentPos).replace(/[^0-9.-]/g, '')) || 0), AdjustmentNeg: acc.AdjustmentNeg + (parseFloat(String(row.AdjustmentNeg).replace(/[^0-9.-]/g, '')) || 0), ExpectedPayout: acc.ExpectedPayout + (parseFloat(String(row.ExpectedPayout).replace(/[^0-9.-]/g, '')) || 0), ActualPayout: acc.ActualPayout + (row.ActualPayout !== '-' ? (parseFloat(String(row.ActualPayout).replace(/[^0-9.-]/g, '')) || 0) : 0), Variance: acc.Variance + Number(row.VarianceVal || 0)
@@ -461,13 +441,41 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
 
   const dpvTotals = useMemo(() => { return deliveryPayoutVarianceData.reduce((acc, r) => { acc.ERPGross += parseFloat(r.ERPGross.replace(/[^0-9.-]+/g, '')) || 0; acc.PlatGross += parseFloat(r.PlatGross.replace(/[^0-9.-]+/g, '')) || 0; acc.GrossVariance += r.GrossVarianceVal || 0; acc.AutoCommVat += parseFloat(r.AutoCommVat.replace(/[^0-9.-]+/g, '')) || 0; acc.FixedDed += parseFloat(r.FixedDed.replace(/[^0-9.-]+/g, '')) || 0; acc.Expected += parseFloat(r.Expected.replace(/[^0-9.-]+/g, '')) || 0; acc.Actual += parseFloat(r.Actual.replace(/[^0-9.-]+/g, '')) || 0; acc.Variance += r.VarianceVal || 0; return acc; }, { ERPGross: 0, PlatGross: 0, GrossVariance: 0, AutoCommVat: 0, FixedDed: 0, Expected: 0, Actual: 0, Variance: 0 }); }, [deliveryPayoutVarianceData]);
   const deliveryExportTotals = { 'Period': 'TOTAL', 'Platform': '', 'ERP Gross (£)': fmtMoney(deliveryTotals.GrossSales), 'Comm. (£)': fmtMoney(deliveryTotals.Commission), 'VAT on Comm. (£)': fmtMoney(deliveryTotals.VatOnCommission), 'Adv. (£)': fmtMoney(deliveryTotals.Advertisement), 'VAT on Adv. (£)': fmtMoney(deliveryTotals.VatOnAdvertisement), 'Serv. Chg. (£)': fmtMoney(deliveryTotals.ServiceCharges), 'Refunds (£)': fmtMoney(deliveryTotals.Refunds), 'Adj (+) (£)': fmtMoney(deliveryTotals.AdjustmentPos), 'Adj (-) (£)': fmtMoney(deliveryTotals.AdjustmentNeg), 'Expected (£)': fmtMoney(deliveryTotals.ExpectedPayout), 'Actual (£)': fmtMoney(deliveryTotals.ActualPayout), 'Payout Date': '', 'Variance (£)': fmtMoney(deliveryTotals.Variance), 'Variance Reasons': '' };
-  const totalSalesVat = vatSalesData.reduce((sum, row) => sum + row._vatVal, 0); const totalPurchasesVat = vatData.reduce((sum, row) => sum + row._vatVal, 0); const filteredVatDeliveryData = selectedVatPlatform === 'All' ? vatDeliveryData : vatDeliveryData.filter(row => row.Platform === selectedVatPlatform); const filteredPlatformVat = filteredVatDeliveryData.reduce((sum, row) => sum + row._vatVal, 0); const totalPlatformVatAll = vatDeliveryData.reduce((sum, row) => sum + row._vatVal, 0); const netVat = totalSalesVat - totalPurchasesVat - totalPlatformVatAll; 
+  
+  const totalSalesVat = vatSalesData.reduce((sum, row) => sum + row._vatVal, 0); 
+  const totalPurchasesVat = vatData.reduce((sum, row) => sum + row._vatVal, 0); 
+  const filteredVatDeliveryData = selectedVatPlatform === 'All' ? vatDeliveryData : vatDeliveryData.filter(row => row.Platform === selectedVatPlatform); 
+  const filteredPlatformVat = filteredVatDeliveryData.reduce((sum, row) => sum + row._vatVal, 0); 
+  const totalPlatformVatAll = vatDeliveryData.reduce((sum, row) => sum + row._vatVal, 0); 
+  const netVat = totalSalesVat - totalPurchasesVat - totalPlatformVatAll; 
+
+  // Export handlers for VAT Summary
+  const handleExportVatSummary = (format) => {
+    const title = "VAT Summary Report";
+    const headers = ['Category', 'Description / Details', 'Amount (£)'];
+    const rows = [
+      { 'Category': 'VAT Collected', 'Description / Details': 'Total VAT Collected on Sales', 'Amount (£)': fmtMoney(totalSalesVat) },
+      { 'Category': 'VAT Paid', 'Description / Details': 'Total VAT Paid on Purchases & Expenses', 'Amount (£)': fmtMoney(totalPurchasesVat) },
+      { 'Category': 'VAT Deducted', 'Description / Details': `Total VAT Deducted by Delivery Platforms (${selectedVatPlatform})`, 'Amount (£)': fmtMoney(filteredPlatformVat) },
+      { 'Category': 'Net VAT', 'Description / Details': netVat > 0 ? 'Net VAT Payable' : 'Net VAT Receivable', 'Amount (£)': fmtMoney(Math.abs(netVat)) }
+    ];
+    handleExport(format, title, headers, rows);
+  };
 
   const theme = { bg: '#ffffff', cardBg: '#ffffff', textMain: '#1e293b', textMuted: '#64748b', primary: '#0ea5e9', border: '#e2e8f0' };
 
   return (
     <div style={{ background: theme.bg, minHeight: '100vh', fontFamily: '"Inter", sans-serif', color: theme.textMain, width: '100%', boxSizing: 'border-box' }}>
       
+      {/* Print styles injected to hide sidebars/buttons during print/save PDF */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #printable-vat-area, #printable-vat-area * { visibility: visible; }
+          #printable-vat-area { position: absolute; left: 0; top: 0; width: 100%; }
+        }
+      `}</style>
+
       <div style={{ padding: '24px', overflowX: 'hidden', width: '100%', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px', flexWrap: 'wrap', gap: '20px' }}>
           <div style={{ display: 'flex', gap: '16px', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
@@ -485,8 +493,8 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
             )}
             {activeReport === 'ledger' && selectedLedgerId && (
               <>
-                <button onClick={() => handleExport('excel', `General Ledger`, ['Date', 'Ref', 'Description', 'Contra', 'Debit', 'Credit', 'Balance'], ledgerData)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileSpreadsheet size={16} /> Excel</button>
-                <button onClick={() => handleExport('pdf', `General Ledger`, ['Date', 'Ref', 'Description', 'Contra', 'Debit', 'Credit', 'Balance'], ledgerData)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> PDF</button>
+                <button onClick={() => handleExport('excel', `General Ledger - ${selectedAccountName}`, ['Date', 'Ref', 'Description', 'Contra', 'Debit', 'Credit', 'Balance'], ledgerData)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileSpreadsheet size={16} /> Excel</button>
+                <button onClick={() => handleExport('pdf', `General Ledger - ${selectedAccountName}`, ['Date', 'Ref', 'Description', 'Contra', 'Debit', 'Credit', 'Balance'], ledgerData)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> PDF</button>
               </>
             )}
             {activeReport === 'suppliers' && (
@@ -496,7 +504,11 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
               </>
             )}
             {activeReport === 'vat' && (
-              <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> Print / Save PDF</button>
+              <>
+                <button onClick={() => handleExportVatSummary('excel')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileSpreadsheet size={16} /> Excel</button>
+                <button onClick={() => handleExportVatSummary('pdf')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> PDF</button>
+                <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> Print</button>
+              </>
             )}
             {activeReport === 'delivery' && (
               <>
@@ -677,7 +689,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
 
           {/* VAT SUMMARY DASHBOARD VIEW */}
           {activeReport === 'vat' && (
-            <div>
+            <div id="printable-vat-area">
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', padding: '24px', background: '#f8fafc', borderBottom: `1px solid ${theme.border}` }}>
                 <div style={{ background: '#f0fdf4', padding: '16px', borderRadius: '10px', border: '1px solid #bbf7d0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#166534', textTransform: 'uppercase', marginBottom: '8px' }}>VAT Collected (on Sales)</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#15803d', textAlign: 'right' }}>£ {fmtMoney(totalSalesVat)}</div></div>
                 <div style={{ background: '#fff7ed', padding: '16px', borderRadius: '10px', border: `1px solid #fdba74`, boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#ea580c', textTransform: 'uppercase', marginBottom: '8px' }}>VAT Paid (on Purchases)</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#c2410c', textAlign: 'right' }}>£ {fmtMoney(totalPurchasesVat)}</div></div>
@@ -767,7 +779,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
                     <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}><label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, textTransform: 'uppercase' }}>Filter Platform:</label><select value={selectedPlatform} onChange={e => setSelectedPlatform(e.target.value)} style={{ padding: '6px 12px', borderRadius: '6px', border: `1px solid ${theme.border}`, fontSize: '12px', fontWeight: '700', outline: 'none' }}>{deliveryPlatformsList.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                     <table style={{ width: 'max-content', borderCollapse: 'collapse', textAlign: 'left', whiteSpace: 'nowrap' }}>
                       <thead style={{ fontSize: '11px', color: theme.textMuted, textTransform: 'uppercase', borderBottom: `2px solid ${theme.border}` }}><tr><th style={{ padding: '10px 12px', textAlign: 'left' }}>Period</th><th style={{ padding: '10px 12px', textAlign: 'left' }}>Platform</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>ERP Gross</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Plat. Gross</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Gross Variance</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Auto Comm+VAT</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Fixed Ded & Adj</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>ERP Expected</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Actual Bank</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Variance</th></tr></thead>
-                      <tbody>{deliveryPayoutVarianceData.length === 0 ? (<tr><td colSpan="10" style={{ padding: '40px', textAlign: 'center', color: theme.textMuted }}>No delivery payout variances found.</td></tr>) : (<>{deliveryPayoutVarianceData.map((row, i) => (<tr key={i} style={{ borderBottom: `1px solid ${theme.border}` }}><td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: '600', textAlign: 'left' }}>{row.Period}</td><td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: '700', color: theme.primary, textAlign: 'left' }}>{row.Platform}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>{row.ERPGross}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#475569' }}>{row.PlatGross}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={row.GrossVarianceVal} text={row.GrossVariance} /></td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>{row.AutoCommVat}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>{row.FixedDed}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', fontWeight: '700' }}>{row.Expected}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', fontWeight: '800', color: '#059669' }}>{row.Actual}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={row.VarianceVal} text={row.Variance} /></td></tr>))}<tr style={{ background: '#f1f5f9', fontWeight: '800' }}><td colSpan="2" style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'left' }}>TOTALS:</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.ERPGross)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.PlatGross)}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={dpvTotals.GrossVariance} text={`${dpvTotals.GrossVariance > 0 ? '+ ' : ''}£ ${fmtMoney(Math.abs(dpvTotals.GrossVariance))}`} /></td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>£ {fmtMoney(dpvTotals.AutoCommVat)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>£ {fmtMoney(dpvTotals.FixedDed)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.Expected)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#059669' }}>£ {fmtMoney(dpvTotals.Actual)}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={dpvTotals.Variance} text={`${dpvTotals.Variance > 0 ? '+ ' : ''}£ ${fmtMoney(Math.abs(dpvTotals.Variance))}`} /></td></tr></>)}</tbody>
+                      <tbody>{deliveryPayoutVarianceData.length === 0 ? (<tr><td colSpan="10" style={{ padding: '40px', textAlign: 'center', color: theme.textMuted }}>No delivery payout variances found.</td></tr>) : (<>{deliveryPayoutVarianceData.map((row, i) => (<tr key={i} style={{ borderBottom: `1px solid ${theme.border}` }}><td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: '600', textAlign: 'left' }}>{row.Period}</td><td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: '700', color: theme.primary, textAlign: 'left' }}>{row.Platform}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>{row.ERPGross}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#475569' }}>{row.PlatGross}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={row.GrossVarianceVal} text={row.GrossVariance} /></td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>{row.AutoCommVat}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>{row.FixedDed}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', fontWeight: '700' }}>{row.Expected}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', fontWeight: '800', color: '#059669' }}>{row.Actual}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={row.VarianceVal} text={row.Variance} /></td></tr>))}<tr style={{ background: '#f1f5f9', fontWeight: '800' }}><td colSpan="2" style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'left' }}>TOTALS:</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.ERPGross)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.PlatGross)}</td><td style={{ padding: '10px 12px', textAlign: 'center' }}><VarBadge value={dpvTotals.GrossVariance} text={`${dpvTotals.GrossVariance > 0 ? '+ ' : ''}£ ${fmtMoney(Math.abs(dpvTotals.GrossVariance))}`} /></td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>£ {fmtMoney(dpvTotals.AutoCommVat)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#dc2626' }}>£ {fmtMoney(dpvTotals.FixedDed)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}>£ {fmtMoney(dpvTotals.Expected)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center', color: '#059669' }}>£ {fmtMoney(dpvTotals.Actual)}</td><td style={{ padding: '10px 12px', fontSize: '12px', textAlign: 'center' }}><VarBadge value={dpvTotals.Variance} text={`${dpvTotals.Variance > 0 ? '+ ' : ''}£ ${fmtMoney(Math.abs(dpvTotals.Variance))}`} /></td></tr></>)}</tbody>
                     </table>
                   </div>
                 )}
