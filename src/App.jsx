@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, getDocs, deleteDoc, doc } from 'firebase/firestore'; 
+import { collection, onSnapshot, getDocs, deleteDoc, doc, query, where } from 'firebase/firestore'; 
 import { db } from './firebase'; 
 import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale } from 'lucide-react';
 import PurchasesExpenses from './components/PurchasesExpenses.jsx';
@@ -99,7 +99,6 @@ function App() {
 
         if (deletions.length > 0) {
           await Promise.all(deletions);
-          console.log(`🧹 Automatically cleaned ${deletions.length} duplicate account entries from Firebase.`);
         }
       } catch (err) {
         console.error("Error cleaning cloud duplicates:", err);
@@ -132,17 +131,17 @@ function App() {
     // Real-time listeners for core transaction databases
     const unsubscribeSales = onSnapshot(collection(db, "erp_sales_db"), (snapshot) => {
       const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (salesData.length > 0) setSalesDb(salesData);
+      setSalesDb(salesData); 
     });
 
     const unsubscribeReceipts = onSnapshot(collection(db, "erp_receipts"), (snapshot) => {
       const receiptsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (receiptsData.length > 0) setReceiptsDb(receiptsData);
+      setReceiptsDb(receiptsData);
     });
 
     const unsubscribePurchases = onSnapshot(collection(db, "erp_purchases"), (snapshot) => {
       const purchasesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (purchasesData.length > 0) setPurchasesDb(purchasesData);
+      setPurchasesDb(purchasesData);
     });
 
     return () => {
@@ -176,8 +175,8 @@ function App() {
             <Store size={16} color="#fff" />
           </div>
           <div>
-            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: '900', color: theme.text, letterSpacing: '-0.3px', lineHeight: '1.2' }}>Ali's Kitchen</h1>
-            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}> ERP</div>
+            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: '900', color: theme.text, letterSpacing: '-0.3px', lineHeight: '1.2' }}>Naanstaap</h1>
+            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tooting ERP</div>
           </div>
         </div>
         
@@ -344,11 +343,26 @@ function App() {
               <Dashboard 
                 db={salesDb} salesDb={salesDb} accountsDb={accountsDb} receiptsDb={receiptsDb} purchasesDb={purchasesDb} deliveryDb={deliveryDb}
                 onEditRecord={(date) => { setEditRecordDate(date); setActiveTab('Daily Sales'); }}
-                onDeleteRecord={(date) => {
+                onDeleteRecord={async (date) => {
                   if(window.confirm(`Are you sure you want to delete the sales record for ${date}?`)) {
-                    const updatedSales = salesDb.filter(r => r.date !== date);
-                    setSalesDb(updatedSales);
-                    localStorage.setItem('erp_sales_db', JSON.stringify(updatedSales));
+                    try {
+                      // SEARCH AND DESTROY: Find any record in Firebase with this date and delete it
+                      const q = query(collection(db, "erp_sales_db"), where("date", "==", date));
+                      const querySnapshot = await getDocs(q);
+                      
+                      querySnapshot.forEach(async (document) => {
+                        await deleteDoc(doc(db, "erp_sales_db", document.id));
+                      });
+
+                      // FALLBACK: If the document ID itself was saved as the date string
+                      try { await deleteDoc(doc(db, "erp_sales_db", date)); } catch(e) {}
+                      
+                      // Remove from local screen instantly
+                      setSalesDb(prev => prev.filter(r => r.date !== date));
+                    } catch (error) {
+                      console.error("Error deleting document from Firebase: ", error);
+                      alert("Failed to delete from database. Check console for details.");
+                    }
                   }
                 }}
               />

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
-import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
+import { db as firebaseDb } from "../firebase"; 
 import { ShoppingCart, Plus, Trash2, Edit2, FileText, X, Search, FileSpreadsheet } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -48,7 +48,7 @@ const fmtMoney = (n) => {
 const getEmptyLine = () => ({ id: Date.now() + Math.random(), account: '', gross: '', vat: '' });
 
 const getInitialForm = () => ({
-  id: '', date: getToday(), supplier: '', refNo: '', bankCategory: '', description: '', lines: [getEmptyLine()]
+  id: '', date: getToday(), supplier: '', refNo: '', description: '', lines: [getEmptyLine()]
 });
 
 // === SPREADSHEET-STYLE UI THEME ===
@@ -205,7 +205,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     if (setDb) setDb(newDb);
     
     try {
-      // Firebase Write
       await setDoc(doc(firebaseDb, "erp_purchases", recordId), invoiceRecord);
       
       alert(formData.id ? `✅ Invoice updated successfully!` : `✅ Invoice saved successfully!`);
@@ -229,7 +228,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
       if (setDb) setDb(newDb);
       
       try {
-        // Firebase Delete
         await deleteDoc(doc(firebaseDb, "erp_purchases", id));
       } catch (error) {
         console.error("Error deleting purchase from Firebase: ", error);
@@ -263,7 +261,7 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
       const term = searchTerm.toLowerCase();
       result = result.filter(row => {
         const linesStr = row.lines?.map(l => l.account).join(' ').toLowerCase() || '';
-        return (String(row.supplier || '').toLowerCase().includes(term) || String(row.refNo || '').toLowerCase().includes(term) || String(row.description || '').toLowerCase().includes(term) || String(row.totalGross || '').includes(term) || String(row.bankCategory || '').toLowerCase().includes(term) || String(formatDate(row.date) || '').includes(term) || linesStr.includes(term));
+        return (String(row.supplier || '').toLowerCase().includes(term) || String(row.refNo || '').toLowerCase().includes(term) || String(row.description || '').toLowerCase().includes(term) || String(row.totalGross || '').includes(term) || String(formatDate(row.date) || '').includes(term) || linesStr.includes(term));
       });
     }
     return result;
@@ -271,17 +269,17 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
 
   const handleExport = (format) => {
     if (filteredDb.length === 0) return alert("No invoices available to export.");
-    const headers = ['Date', 'Supplier', 'Ref #', 'P&L Bank Category', 'Description', 'Expense Accounts Used', 'Total VAT (£)', 'Total Gross (£)'];
-    const dataRows = filteredDb.map(row => [ formatDate(row.date), row.supplier || 'Unassigned', row.refNo || '-', row.bankCategory || 'Uncategorized', row.description || '-', row.lines?.map(l => l.account).filter(Boolean).join(', ') || 'None', fmtMoney(row.totalVat), fmtMoney(row.totalGross) ]);
+    const headers = ['Date', 'Supplier', 'Ref #', 'Description', 'Expense Accounts Used', 'Total VAT (£)', 'Total Gross (£)'];
+    const dataRows = filteredDb.map(row => [ formatDate(row.date), row.supplier || 'Unassigned', row.refNo || '-', row.description || '-', row.lines?.map(l => l.account).filter(Boolean).join(', ') || 'None', fmtMoney(row.totalVat), fmtMoney(row.totalGross) ]);
 
     if (format === 'excel') {
-      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="8" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen - </td></tr><tr><td colspan="8" style="font-size: 14px; font-weight: bold; border: none;">Purchases & Expenses Log</td></tr><tr><td colspan="8" style="font-size: 12px; color: #555; border: none;">Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}</td></tr><tr><td colspan="8" style="border: none;"></td></tr><tr>`;
-      headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; ${i >= 6 ? 'text-align: right;' : 'text-align: left;'}">${h}</th>`; }); html += `</tr>`;
-      dataRows.forEach(row => { html += `<tr>`; row.forEach((val, idx) => { html += `<td style="border: 1px solid #cbd5e1; padding: 8px; ${idx >= 6 ? 'text-align: right;' : 'text-align: left;'}">${val}</td>`; }); html += `</tr>`; }); html += `</table></body></html>`;
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="7" style="font-size: 18px; font-weight: bold; border: none;">Naanstaap - Tooting</td></tr><tr><td colspan="7" style="font-size: 14px; font-weight: bold; border: none;">Purchases & Expenses Log</td></tr><tr><td colspan="7" style="font-size: 12px; color: #555; border: none;">Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}</td></tr><tr><td colspan="7" style="border: none;"></td></tr><tr>`;
+      headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; ${i >= 5 ? 'text-align: right;' : 'text-align: left;'}">${h}</th>`; }); html += `</tr>`;
+      dataRows.forEach(row => { html += `<tr>`; row.forEach((val, idx) => { html += `<td style="border: 1px solid #cbd5e1; padding: 8px; ${idx >= 5 ? 'text-align: right;' : 'text-align: left;'}">${val}</td>`; }); html += `</tr>`; }); html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Purchases_Log.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
-      const doc = new jsPDF('l', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen - ", 40, 40); doc.setFontSize(14); doc.text("Purchases & Expenses Log", 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}`, 40, 75);
-      autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 9, cellPadding: 5 }, styles: { fontSize: 8, cellPadding: 5 }, columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' } } });
+      const doc = new jsPDF('l', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Naanstaap - Tooting", 40, 40); doc.setFontSize(14); doc.text("Purchases & Expenses Log", 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}`, 40, 75);
+      autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 9, cellPadding: 5 }, styles: { fontSize: 8, cellPadding: 5 }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' } } });
       doc.save(`Purchases_Log.pdf`);
     }
   };
@@ -322,18 +320,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
               <tr>
                 <td style={labelTd}>Invoice / Ref #</td>
                 <td style={inputTd}><CellInput type="text" name="refNo" value={formData.refNo} onChange={handleHeaderChange} onKeyDown={handleKeyDown} placeholder="e.g. INV-1004" align="left" required /></td>
-              </tr>
-              <tr>
-                <td style={labelTd}>P&L Bank Category (Tag)</td>
-                <td style={inputTd}>
-                  <select name="bankCategory" value={formData.bankCategory} onChange={handleHeaderChange} onKeyDown={handleKeyDown} style={{ width: '100%', border: 'none', padding: '8px 12px', boxSizing: 'border-box', fontFamily: sheetTheme.font, fontSize: '13px', outline: 'none', background: 'transparent', color: '#0369a1', fontWeight: '700' }} required>
-                    <option value="">-- Select Bank Category --</option>
-                    <option value="Memon Services Ltd">Memon Services Ltd</option>
-                    <option value="Khanani Management">Khanani Management</option>
-                    <option value="LK Associates">LK Associates</option>
-                    <option value="Cash in Hand">Cash in Hand</option>
-                  </select>
-                </td>
               </tr>
               <tr>
                 <td style={labelTd}>Description / Notes</td>
@@ -444,7 +430,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                 <tr>
                   <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>Date</th>
                   <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>Supplier & Ref</th>
-                  <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>P&L Category Tag</th>
                   <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>Description / Notes</th>
                   <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>Expense Accounts & Summary</th>
                   <th style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderTop: 'none', textAlign: 'right' }}>Total Gross (£)</th>
@@ -453,7 +438,7 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
               </thead>
               <tbody>
                 {filteredDb.length === 0 ? (
-                  <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>No invoices match your search or date range.</td></tr>
+                  <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>No invoices match your search or date range.</td></tr>
                 ) : (
                   filteredDb.map((row) => (
                     <tr key={row.id}>
@@ -462,7 +447,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                         <div style={{ fontWeight: '700', color: '#1f2937' }}>{row.supplier || 'Unassigned'}</div>
                         <div style={{ fontSize: '11px', color: '#6b7280' }}>{row.refNo}</div>
                       </td>
-                      <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', color: '#0369a1', fontWeight: '700' }}>{row.bankCategory || '-'}</td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', color: '#374151' }}>{row.description || '-'}</td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', color: '#374151' }}>
                         <div style={{ fontWeight: '700', color: '#1f2937', marginBottom: '2px' }}>
