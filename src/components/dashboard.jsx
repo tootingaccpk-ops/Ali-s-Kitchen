@@ -106,6 +106,22 @@ export default function Dashboard({ db = [], accountsDb = [], receiptsDb = [], d
 
     rDb.forEach(r => {
       if (normalizeDate(r.date) > maxDate) return;
+      
+      // Process Journal Vouchers (JV) for banks
+      if (r.type === 'Journal' || r.type === 'JV') {
+        if (r.lines && r.lines.length > 0) {
+          r.lines.forEach(line => {
+            if ((line.account || '').trim() === accountName) {
+              bal += (Number(line.debit) || 0) - (Number(line.credit) || 0);
+            }
+          });
+        } else {
+          if ((r.debitAccount || '').trim() === accountName) bal += Number(r.amount) || 0;
+          if ((r.creditAccount || '').trim() === accountName) bal -= Number(r.amount) || 0;
+        }
+        return;
+      }
+
       if (r.type === 'Transfer') {
         if (r.toBank === accountName) bal += Number(r.amount);
         if (r.fromBank === accountName) bal -= Number(r.amount);
@@ -135,6 +151,23 @@ export default function Dashboard({ db = [], accountsDb = [], receiptsDb = [], d
 
     rDb.forEach(r => {
       if (normalizeDate(r.date) > maxDate) return;
+
+      // Process Journal Vouchers (JV) for cash/safe
+      if (r.type === 'Journal' || r.type === 'JV') {
+        if (r.lines && r.lines.length > 0) {
+          r.lines.forEach(line => {
+            const lAcc = (line.account || '').trim();
+            if (lAcc === 'Cash in Hand' || lAcc === 'Safe Box (Main Cash)') {
+              bal += (Number(line.debit) || 0) - (Number(line.credit) || 0);
+            }
+          });
+        } else {
+          if ((r.debitAccount || '').trim() === 'Cash in Hand' || (r.debitAccount || '').trim() === 'Safe Box (Main Cash)') bal += Number(r.amount) || 0;
+          if ((r.creditAccount || '').trim() === 'Cash in Hand' || (r.creditAccount || '').trim() === 'Safe Box (Main Cash)') bal -= Number(r.amount) || 0;
+        }
+        return;
+      }
+
       if (r.type !== 'Transfer') {
         if (r.mode === 'Cash') {
           bal += r.type === 'Receipt' ? Number(r.amount) : -Number(r.amount);
