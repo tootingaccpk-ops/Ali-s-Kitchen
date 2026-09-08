@@ -86,6 +86,23 @@ export default function BankCashBook({ accountsDb = [], receiptsDb = [], salesDb
       const rDate = normalizeDate(r.date);
       if (r.type === 'Transfer' && String(r.description).includes('Auto-Collected')) return;
 
+      if (r.type === 'Journal' || r.type === 'JV') {
+        if (r.lines && r.lines.length > 0) {
+          r.lines.forEach(line => {
+            if ((line.account || '').trim() === acc.name) {
+              const d = Number(line.debit) || 0;
+              const c = Number(line.credit) || 0;
+              if (d > 0) trans.push({ Date: rDate, Ref: `JV-${(r.id||'').slice(-4)}`, Description: line.description || r.description || 'Journal Voucher', Contra: 'Multiple', PaidIn: d, PaidOut: 0 });
+              if (c > 0) trans.push({ Date: rDate, Ref: `JV-${(r.id||'').slice(-4)}`, Description: line.description || r.description || 'Journal Voucher', Contra: 'Multiple', PaidIn: 0, PaidOut: c });
+            }
+          });
+        } else {
+          if ((r.debitAccount || '').trim() === acc.name) trans.push({ Date: rDate, Ref: `JV-${(r.id||'').slice(-4)}`, Description: r.description || 'Journal Voucher', Contra: r.creditAccount, PaidIn: Number(r.amount), PaidOut: 0 });
+          if ((r.creditAccount || '').trim() === acc.name) trans.push({ Date: rDate, Ref: `JV-${(r.id||'').slice(-4)}`, Description: r.description || 'Journal Voucher', Contra: r.debitAccount, PaidIn: 0, PaidOut: Number(r.amount) });
+        }
+        return;
+      }
+
       if (r.type !== 'Transfer') {
         if (isCashLedger && r.mode === 'Cash') {
           trans.push({ Date: rDate, Ref: `RP-${r.id.slice(-4)}`, Description: r.description || r.category, Contra: r.account, PaidIn: r.type === 'Receipt' ? Number(r.amount) : 0, PaidOut: r.type === 'Payment' ? Number(r.amount) : 0 });
@@ -181,7 +198,7 @@ export default function BankCashBook({ accountsDb = [], receiptsDb = [], salesDb
 
     if (format === 'excel') {
       let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table>`;
-      html += `<tr><td colspan="7" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen - </td></tr>`;
+      html += `<tr><td colspan="7" style="font-size: 18px; font-weight: bold; border: none;">Naanstaap - Tooting</td></tr>`;
       html += `<tr><td colspan="7" style="font-size: 14px; font-weight: bold; border: none;">Cash & Bank Book: ${ledgerData.accName}</td></tr>`;
       html += `<tr><td colspan="7" style="font-size: 12px; color: #555; border: none;">Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}</td></tr><tr><td colspan="7" style="border: none;"></td></tr><tr>`;
       headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; });
@@ -193,7 +210,7 @@ export default function BankCashBook({ accountsDb = [], receiptsDb = [], salesDb
       const link = document.createElement("a"); link.href = url; link.download = `CashBook_${ledgerData.accName.replace(/\s+/g, '_')}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else {
       const doc = new jsPDF('l', 'pt', 'a4');
-      doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen - ", 40, 40); doc.setFontSize(14); doc.text(`Cash & Bank Book: ${ledgerData.accName}`, 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`, 40, 75);
+      doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Naanstaap - Tooting", 40, 40); doc.setFontSize(14); doc.text(`Cash & Bank Book: ${ledgerData.accName}`, 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`, 40, 75);
       autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }});
       doc.save(`CashBook_${ledgerData.accName.replace(/\s+/g, '_')}.pdf`);
     }
