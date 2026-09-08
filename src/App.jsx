@@ -175,8 +175,8 @@ function App() {
             <Store size={16} color="#fff" />
           </div>
           <div>
-            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: '900', color: theme.text, letterSpacing: '-0.3px', lineHeight: '1.2' }}>Naanstaap</h1>
-            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tooting ERP</div>
+            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: '900', color: theme.text, letterSpacing: '-0.3px', lineHeight: '1.2' }}>Ali's Kitchen</h1>
+            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ali's kitchen ERP</div>
           </div>
         </div>
         
