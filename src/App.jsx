@@ -54,13 +54,17 @@ function App() {
   }, []);
 
   const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'Financial Statements', 'Timesheets'];
+
+const hasAccess = (tabName) => {
+  if (!currentUser) return false;
+  const role = (currentUser.role || '').toLowerCase();
   
-  const hasAccess = (tabName) => {
-    if (!currentUser) return false;
-    const role = (currentUser.role || '').toLowerCase();
-    if (role === 'admin' || role === 'owner') return true;
-    return currentUser.permissions && currentUser.permissions.includes(tabName);
-  };
+  // Explicitly force Timesheets to show for Admin and Owner roles
+  if (tabName === 'Timesheets' && (role === 'admin' || role === 'owner')) return true;
+  
+  if (role === 'admin' || role === 'owner') return true;
+  return currentUser.permissions && currentUser.permissions.includes(tabName);
+};
 
   const allowedNavItems = allTabsList.filter(hasAccess);
 
