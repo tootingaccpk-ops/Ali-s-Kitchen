@@ -165,7 +165,7 @@ function App() {
   }
 
   // KIOSK LOCK-DOWN CHECK: If logged in as the counter kiosk, show ONLY the punch clock
-  const isKioskUser = currentUser?.username === 'kiosk' || currentUser?.email === 'kiosk@aliskitchen.com';
+  const isKioskUser = currentUser?.username === 'attendance' || currentUser?.email === 'attendance@aliskitchen.com';
   if (isKioskUser) {
     return <AttendanceManager isKioskMode={true} />;
   }
