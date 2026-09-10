@@ -477,7 +477,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
         </div>
 
         <div style={{ ...cardStyle, border: '1px solid #3b82f6' }}>
-          <div style={{ ...cardHeader, background: '#eff6ff' }}>
+          <div style={{ cardHeader, background: '#eff6ff' }}>
             <FileUp size={20} color="#2563eb" />
             <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#1e40af' }}>Historic Data Importer (.xls)</h2>
           </div>

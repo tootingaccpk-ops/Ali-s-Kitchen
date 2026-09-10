@@ -54,17 +54,13 @@ function App() {
   }, []);
 
   const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'Financial Statements', 'Timesheets'];
-
-const hasAccess = (tabName) => {
-  if (!currentUser) return false;
-  const role = (currentUser.role || '').toLowerCase();
   
-  // Explicitly force Timesheets to show for Admin and Owner roles
-  if (tabName === 'Timesheets' && (role === 'admin' || role === 'owner')) return true;
-  
-  if (role === 'admin' || role === 'owner') return true;
-  return currentUser.permissions && currentUser.permissions.includes(tabName);
-};
+  const hasAccess = (tabName) => {
+    if (!currentUser) return false;
+    const role = (currentUser.role || '').toLowerCase();
+    if (role === 'admin' || role === 'owner') return true;
+    return currentUser.permissions && currentUser.permissions.includes(tabName);
+  };
 
   const allowedNavItems = allTabsList.filter(hasAccess);
 
@@ -168,8 +164,8 @@ const hasAccess = (tabName) => {
     }} />;
   }
 
-  // KIOSK LOCK-DOWN CHECK: If logged in as the counter kiosk, show ONLY the punch clock
-  const isKioskUser = currentUser?.username === 'attendance' || currentUser?.email === 'attendance@aliskitchen.com';
+  // KIOSK LOCK-DOWN CHECK: Target the 'attendance' username strictly
+  const isKioskUser = currentUser?.username?.toLowerCase() === 'attendance' || currentUser?.email === 'attendance@aliskitchen.com';
   if (isKioskUser) {
     return <AttendanceManager isKioskMode={true} />;
   }
