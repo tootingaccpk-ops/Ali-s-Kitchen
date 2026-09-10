@@ -58,7 +58,10 @@ function App() {
   const hasAccess = (tabName) => {
     if (!currentUser) return false;
     const role = (currentUser.role || '').toLowerCase();
+    
+    // Force Timesheets and all other tabs to always show for admin or owner roles
     if (role === 'admin' || role === 'owner') return true;
+    
     return currentUser.permissions && currentUser.permissions.includes(tabName);
   };
 
