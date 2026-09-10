@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, getDocs, deleteDoc, doc, query, where } from 'firebase/firestore'; 
 import { db } from './firebase'; 
-import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale } from 'lucide-react';
+import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale, Clock } from 'lucide-react';
 import PurchasesExpenses from './components/PurchasesExpenses.jsx';
 import LoginScreen from './components/LoginScreen.jsx';
 import DailySales from './components/Dailysalesform.jsx';
@@ -12,6 +12,7 @@ import Reports from './components/Reports.jsx';
 import FinancialStatements from './components/FinancialStatements.jsx';
 import Dashboard from './components/dashboard.jsx';
 import SystemSetup from './components/SystemSettings.jsx'; 
+import AttendanceManager from './AttendanceManager.jsx';
 
 const tabIcons = {
   'Dashboard': Home,
@@ -21,7 +22,8 @@ const tabIcons = {
   'Cash & Bank Books': Landmark, 
   'Delivery Settlements': Truck, 
   'Reports': FileText,
-  'Financial Statements': Scale
+  'Financial Statements': Scale,
+  'Timesheets': Clock
 };
 
 function App() {
@@ -51,7 +53,7 @@ function App() {
     }
   }, []);
 
-  const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'Financial Statements'];
+  const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'Financial Statements', 'Timesheets'];
   
   const hasAccess = (tabName) => {
     if (!currentUser) return false;
@@ -160,6 +162,12 @@ function App() {
       setIsAuthenticated(true);
       setCurrentUser(user);
     }} />;
+  }
+
+  // KIOSK LOCK-DOWN CHECK: If logged in as the counter kiosk, show ONLY the punch clock
+  const isKioskUser = currentUser?.username === 'kiosk' || currentUser?.email === 'kiosk@aliskitchen.com';
+  if (isKioskUser) {
+    return <AttendanceManager isKioskMode={true} />;
   }
 
   const theme = { bg: '#f4f7f9', sidebar: '#ffffff', text: '#1e293b', muted: '#64748b', border: '#e2e8f0', primary: '#4f46e5' };
@@ -346,7 +354,6 @@ function App() {
                 onDeleteRecord={async (date) => {
                   if(window.confirm(`Are you sure you want to delete the sales record for ${date}?`)) {
                     try {
-                      // SEARCH AND DESTROY: Find any record in Firebase with this date and delete it
                       const q = query(collection(db, "erp_sales_db"), where("date", "==", date));
                       const querySnapshot = await getDocs(q);
                       
@@ -354,10 +361,8 @@ function App() {
                         await deleteDoc(doc(db, "erp_sales_db", document.id));
                       });
 
-                      // FALLBACK: If the document ID itself was saved as the date string
                       try { await deleteDoc(doc(db, "erp_sales_db", date)); } catch(e) {}
                       
-                      // Remove from local screen instantly
                       setSalesDb(prev => prev.filter(r => r.date !== date));
                     } catch (error) {
                       console.error("Error deleting document from Firebase: ", error);
@@ -422,6 +427,12 @@ function App() {
                   categoriesMap={categoriesMap} 
                   initialSubTab={reportSubTab}
                 />
+              </div>
+            )}
+
+            {activeTab === 'Timesheets' && hasAccess('Timesheets') && (
+              <div style={{ padding: '0px', boxSizing: 'border-box', width: '100%' }}>
+                <AttendanceManager isKioskMode={false} />
               </div>
             )}
             
