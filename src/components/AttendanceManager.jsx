@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, query, where } from 'firebase/firestore';
 import { db as firebaseDb } from '../firebase'; 
 import { Calculator, Users, Clock, FileSpreadsheet, FileText, UserPlus, Trash2, Edit2, AlertCircle, X } from 'lucide-react';
@@ -37,6 +37,8 @@ export default function AttendanceManager({ isKioskMode = false }) {
   const [activeTab, setActiveTab] = useState(effectiveKioskMode ? 'kiosk' : 'admin');
   const [employees, setEmployees] = useState([]);
   
+  const topRef = useRef(null); // Reference for auto-scrolling
+
   // --- KIOSK STATE ---
   const [selectedEmp, setSelectedEmp] = useState('');
   const [pin, setPin] = useState('');
@@ -117,7 +119,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
             if (i + 1 < dayLogs.length && dayLogs[i+1].punchType === 'OUT') {
               punchOut = dayLogs[i+1];
               
-              // Strip seconds and milliseconds to ensure exact minute-level accuracy
               const inTime = new Date(punchIn.timestamp);
               inTime.setSeconds(0, 0);
               const outTime = new Date(punchOut.timestamp);
@@ -143,7 +144,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
     return Object.values(report).filter(r => r.shifts > 0 || r.rawPairs.length > 0);
   }, [attendanceLogs, employees]);
 
-  // Keep Audit Modal Live-Updated when punches are edited/deleted
   useEffect(() => {
     if (selectedAuditEmp) {
       const updated = payrollData.find(r => r.id === selectedAuditEmp.id);
@@ -162,7 +162,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
     }
 
     try {
-      // Fetch employee's complete punch history to validate sequence
       const q = query(collection(firebaseDb, "erp_attendance"), where("employeeId", "==", employee.id));
       const snap = await getDocs(q);
       const empLogs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -194,8 +193,10 @@ export default function AttendanceManager({ isKioskMode = false }) {
       setSelectedEmp('');
       setPin('');
       
-      // Auto-scroll to top so the success message is visible
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Auto-scroll forcefully using React refs
+      setTimeout(() => {
+        topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
 
       setTimeout(() => setKioskMessage({ text: '', type: '' }), 5000);
     } catch (error) {
@@ -525,7 +526,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: theme.bg, fontFamily: '"Inter", sans-serif' }}>
+    <div ref={topRef} style={{ minHeight: '100vh', background: theme.bg, fontFamily: '"Inter", sans-serif' }}>
       {!effectiveKioskMode && (
         <div style={{ background: theme.cardBg, padding: '16px 24px', borderBottom: `1px solid ${theme.border}`, display: 'flex', gap: '16px' }}>
           <button onClick={() => setActiveTab('admin')} style={{ padding: '10px 20px', background: activeTab === 'admin' ? theme.primary : 'transparent', color: activeTab === 'admin' ? '#fff' : theme.textMuted, border: `1px solid ${activeTab === 'admin' ? theme.primary : theme.border}`, borderRadius: '24px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>Dashboard / Admin</button>
