@@ -153,12 +153,19 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   // --- KIOSK ACTIONS ---
   const handlePunch = async (punchType) => {
-    if (!selectedEmp || !pin) return setKioskMessage({ text: 'Select your name and enter PIN.', type: 'error' });
+    // Helper function to show messages, auto-scroll, and auto-clear after 5 seconds
+    const showMessage = (text, type) => {
+      setKioskMessage({ text, type });
+      setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      setTimeout(() => setKioskMessage({ text: '', type: '' }), 5000);
+    };
+
+    if (!selectedEmp || !pin) return showMessage('Select your name and enter PIN.', 'error');
 
     const employee = employees.find(e => e.id === selectedEmp);
     if (employee.pin !== pin) {
       setPin('');
-      return setKioskMessage({ text: 'Incorrect PIN. Try again.', type: 'error' });
+      return showMessage('Incorrect PIN. Try again.', 'error');
     }
 
     try {
@@ -169,11 +176,11 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
       if (punchType === 'IN' && lastPunch && lastPunch.punchType === 'IN') {
         setPin('');
-        return setKioskMessage({ text: 'ERROR: Missing previous Check-Out. Please ask an Admin to fix your timesheet before you can Check In.', type: 'error' });
+        return showMessage('ERROR: Missing previous Check-Out. Please ask an Admin to fix your timesheet before you can Check In.', 'error');
       }
       if (punchType === 'OUT' && (!lastPunch || lastPunch.punchType === 'OUT')) {
         setPin('');
-        return setKioskMessage({ text: 'ERROR: You cannot Check Out because you are not currently Checked In.', type: 'error' });
+        return showMessage('ERROR: You cannot Check Out because you are not currently Checked In.', 'error');
       }
 
       const now = new Date();
@@ -189,18 +196,12 @@ export default function AttendanceManager({ isKioskMode = false }) {
       await addDoc(collection(firebaseDb, "erp_attendance"), logData);
       
       const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setKioskMessage({ text: `✅ Successfully checked ${punchType} at ${formattedTime}`, type: 'success' });
+      showMessage(`✅ Successfully checked ${punchType} at ${formattedTime}`, 'success');
       setSelectedEmp('');
       setPin('');
-      
-      // Auto-scroll forcefully using React refs
-      setTimeout(() => {
-        topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
 
-      setTimeout(() => setKioskMessage({ text: '', type: '' }), 5000);
     } catch (error) {
-      setKioskMessage({ text: 'Database connection error.', type: 'error' });
+      showMessage('Database connection error.', 'error');
     }
   };
 
