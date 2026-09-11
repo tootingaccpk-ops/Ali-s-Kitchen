@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, getDocs, updateDoc, doc, query, where, orderBy } from 'firebase/firestore';
+import { collection, addDoc, getDocs, updateDoc, doc, query, where } from 'firebase/firestore';
 import { db as firebaseDb } from '../firebase'; // Adjust path if necessary
-import { Camera, CheckCircle, Clock, Edit2, User, Image as ImageIcon } from 'lucide-react';
+import { Camera, Edit2, Image as ImageIcon } from 'lucide-react';
 
 // Default dummy employees if none exist in your database yet
 const DEFAULT_EMPLOYEES = [
