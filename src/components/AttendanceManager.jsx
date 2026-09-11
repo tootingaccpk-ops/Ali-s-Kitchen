@@ -116,7 +116,14 @@ export default function AttendanceManager({ isKioskMode = false }) {
             
             if (i + 1 < dayLogs.length && dayLogs[i+1].punchType === 'OUT') {
               punchOut = dayLogs[i+1];
-              durationMs = new Date(punchOut.timestamp) - new Date(punchIn.timestamp);
+              
+              // Strip seconds and milliseconds to ensure exact minute-level accuracy
+              const inTime = new Date(punchIn.timestamp);
+              inTime.setSeconds(0, 0);
+              const outTime = new Date(punchOut.timestamp);
+              outTime.setSeconds(0, 0);
+              
+              durationMs = outTime.getTime() - inTime.getTime();
               report[empId].totalMs += durationMs;
               i += 2;
             } else {
@@ -181,9 +188,15 @@ export default function AttendanceManager({ isKioskMode = false }) {
       };
 
       await addDoc(collection(firebaseDb, "erp_attendance"), logData);
-      setKioskMessage({ text: `✅ Successfully checked ${punchType} at ${now.toLocaleTimeString()}`, type: 'success' });
+      
+      const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setKioskMessage({ text: `✅ Successfully checked ${punchType} at ${formattedTime}`, type: 'success' });
       setSelectedEmp('');
       setPin('');
+      
+      // Auto-scroll to top so the success message is visible
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
       setTimeout(() => setKioskMessage({ text: '', type: '' }), 5000);
     } catch (error) {
       setKioskMessage({ text: 'Database connection error.', type: 'error' });
