@@ -30,7 +30,14 @@ const formatDuration = (ms) => {
 };
 
 export default function AttendanceManager({ isKioskMode = false }) {
-  const [activeTab, setActiveTab] = useState(isKioskMode ? 'kiosk' : 'admin');
+  // STRICT ROLE CHECK: Only Admins or Owners can see the Payroll/Manage tabs.
+  const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
+  const hasAdminRights = currentUserRole === 'admin' || currentUserRole === 'owner';
+  
+  // If they aren't an admin, force them into Kiosk mode permanently.
+  const effectiveKioskMode = isKioskMode || !hasAdminRights;
+
+  const [activeTab, setActiveTab] = useState(effectiveKioskMode ? 'kiosk' : 'admin');
   const [employees, setEmployees] = useState([]);
   
   // --- KIOSK STATE ---
@@ -39,12 +46,12 @@ export default function AttendanceManager({ isKioskMode = false }) {
   const [kioskMessage, setKioskMessage] = useState({ text: '', type: '' });
 
   // --- ADMIN STATE ---
-  const [adminSubTab, setAdminSubTab] = useState('payroll'); // 'payroll' or 'staff'
+  const [adminSubTab, setAdminSubTab] = useState('payroll'); 
   const [startDate, setStartDate] = useState(getFirstDayOfMonth());
   const [endDate, setEndDate] = useState(getTodayDateStr());
   const [attendanceLogs, setAttendanceLogs] = useState([]);
-  const [selectedAuditEmp, setSelectedAuditEmp] = useState(null); // Holds employee data for drill-down
-  const [editingPunch, setEditingPunch] = useState(null); // For manual fixes
+  const [selectedAuditEmp, setSelectedAuditEmp] = useState(null); 
+  const [editingPunch, setEditingPunch] = useState(null); 
   
   // --- ADD STAFF STATE ---
   const [newStaffName, setNewStaffName] = useState('');
@@ -95,7 +102,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
       report[emp.id] = { id: emp.id, name: emp.name, designation: emp.designation || 'Staff', totalMs: 0, shifts: 0, missingOuts: 0, rawPairs: [] };
     });
 
-    // Group logs by employee and date
     const grouped = {};
     attendanceLogs.forEach(log => {
       if (!grouped[log.employeeId]) grouped[log.employeeId] = {};
@@ -128,7 +134,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
             report[empId].shifts += 1;
             report[empId].rawPairs.push({ date, in: punchIn, out: punchOut, durationMs });
           } else {
-            // Orphaned OUT punch (staff checked out without checking in)
             report[empId].rawPairs.push({ date, in: null, out: dayLogs[i], durationMs: 0 });
             i += 1;
           }
@@ -209,7 +214,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
     try {
       if (editingPunch.isNew) {
-        // Create a missing punch
         await addDoc(collection(firebaseDb, "erp_attendance"), {
           employeeId: editingPunch.employeeId,
           employeeName: editingPunch.employeeName,
@@ -219,14 +223,13 @@ export default function AttendanceManager({ isKioskMode = false }) {
           editedByAdmin: true
         });
       } else {
-        // Update existing punch
         await updateDoc(doc(firebaseDb, "erp_attendance", editingPunch.id), { 
           timestamp: new Date(editingPunch.timestamp).toISOString(), 
           editedByAdmin: true 
         });
       }
       setEditingPunch(null);
-      fetchLogs(); // refresh the view
+      fetchLogs(); 
     } catch (error) {
       alert("Error updating timesheet log.");
     }
@@ -254,9 +257,9 @@ export default function AttendanceManager({ isKioskMode = false }) {
   };
 
 
-  // --- VIEWS ---
+  // --- VIEWS (Render Functions to prevent cursor focus loss) ---
 
-  const KioskView = () => (
+  const renderKioskView = () => (
     <div style={{ maxWidth: '400px', margin: '0 auto', background: theme.cardBg, borderRadius: '12px', padding: '32px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', textAlign: 'center' }}>
       <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: '900', color: theme.primary }}>Ali's Kitchen</h2>
       <p style={{ margin: '0 0 32px 0', color: theme.textMuted, fontWeight: '600' }}>Staff Attendance Terminal</p>
@@ -277,7 +280,10 @@ export default function AttendanceManager({ isKioskMode = false }) {
           </select>
 
           <input 
-            type="password" placeholder="Enter 4-Digit PIN" value={pin} readOnly 
+            type="password" 
+            placeholder="Enter 4-Digit PIN" 
+            value={pin} 
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
             style={{ width: '100%', padding: '16px', fontSize: '28px', textAlign: 'center', letterSpacing: '12px', borderRadius: '8px', border: `2px solid ${theme.border}`, outline: 'none', background: '#fff', boxSizing: 'border-box', fontWeight: '900' }} 
           />
 
@@ -299,7 +305,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
     </div>
   );
 
-  const AdminView = () => (
+  const renderAdminView = () => (
     <div style={{ background: theme.cardBg, borderRadius: '12px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
       
       {/* Admin Tabs */}
@@ -454,7 +460,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
                 </div>
                 <div style={{ marginBottom: '24px' }}>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px', color: theme.textMuted }}>Kiosk PIN Code (4 Digits)</label>
-                  <input type="text" value={newStaffPin} onChange={e => setNewStaffPin(e.target.value)} placeholder="e.g. 1234" maxLength={4} pattern="\d{4}" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', letterSpacing: '4px', textAlign: 'center', fontWeight: '800', fontSize: '18px' }} required />
+                  <input type="text" value={newStaffPin} onChange={e => setNewStaffPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="e.g. 1234" maxLength={4} pattern="\d{4}" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', letterSpacing: '4px', textAlign: 'center', fontWeight: '800', fontSize: '18px' }} required />
                 </div>
                 <button type="submit" style={{ width: '100%', padding: '14px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
                   Add to System
@@ -489,7 +495,9 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, fontFamily: '"Inter", sans-serif' }}>
-      {!isKioskMode && (
+      
+      {/* Top Navigation - Hides for non-admins to completely lock them into the kiosk */}
+      {!effectiveKioskMode && (
         <div style={{ background: theme.cardBg, padding: '16px 24px', borderBottom: `1px solid ${theme.border}`, display: 'flex', gap: '16px' }}>
           <button onClick={() => setActiveTab('admin')} style={{ padding: '10px 20px', background: activeTab === 'admin' ? theme.primary : 'transparent', color: activeTab === 'admin' ? '#fff' : theme.textMuted, border: `1px solid ${activeTab === 'admin' ? theme.primary : theme.border}`, borderRadius: '24px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>Dashboard / Admin</button>
           <button onClick={() => setActiveTab('kiosk')} style={{ padding: '10px 20px', background: activeTab === 'kiosk' ? theme.primary : 'transparent', color: activeTab === 'kiosk' ? '#fff' : theme.textMuted, border: `1px solid ${activeTab === 'kiosk' ? theme.primary : theme.border}`, borderRadius: '24px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>Launch Floor Kiosk</button>
@@ -497,7 +505,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
       )}
 
       <div style={{ padding: '32px', maxWidth: '1400px', margin: '0 auto' }}>
-        {activeTab === 'kiosk' ? <KioskView /> : <AdminView />}
+        {activeTab === 'kiosk' ? renderKioskView() : renderAdminView()}
       </div>
 
       {/* EDIT/ADD PUNCH MODAL */}
