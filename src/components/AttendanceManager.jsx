@@ -30,11 +30,8 @@ const formatDuration = (ms) => {
 };
 
 export default function AttendanceManager({ isKioskMode = false }) {
-  // STRICT ROLE CHECK: Only Admins or Owners can see the Payroll/Manage tabs.
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
   const hasAdminRights = currentUserRole === 'admin' || currentUserRole === 'owner';
-  
-  // If they aren't an admin, force them into Kiosk mode permanently.
   const effectiveKioskMode = isKioskMode || !hasAdminRights;
 
   const [activeTab, setActiveTab] = useState(effectiveKioskMode ? 'kiosk' : 'admin');
@@ -58,7 +55,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
   const [newStaffDesig, setNewStaffDesig] = useState('');
   const [newStaffPin, setNewStaffPin] = useState('');
 
-  // 1. Fetch Employees
   const fetchEmployees = async () => {
     try {
       const querySnapshot = await getDocs(collection(firebaseDb, "erp_employees"));
@@ -72,7 +68,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   useEffect(() => { fetchEmployees(); }, []);
 
-  // 2. Fetch Logs when Admin Payroll opens or dates change
   const fetchLogs = async () => {
     try {
       const q = query(collection(firebaseDb, "erp_attendance"), 
@@ -90,12 +85,9 @@ export default function AttendanceManager({ isKioskMode = false }) {
   };
 
   useEffect(() => {
-    if (activeTab === 'admin' && adminSubTab === 'payroll') {
-      fetchLogs();
-    }
+    if (activeTab === 'admin' && adminSubTab === 'payroll') fetchLogs();
   }, [activeTab, adminSubTab, startDate, endDate]);
 
-  // 3. Process Payroll Calculations
   const payrollData = React.useMemo(() => {
     const report = {};
     employees.forEach(emp => {
@@ -144,6 +136,13 @@ export default function AttendanceManager({ isKioskMode = false }) {
     return Object.values(report).filter(r => r.shifts > 0 || r.rawPairs.length > 0);
   }, [attendanceLogs, employees]);
 
+  // Keep Audit Modal Live-Updated when punches are edited/deleted
+  useEffect(() => {
+    if (selectedAuditEmp) {
+      const updated = payrollData.find(r => r.id === selectedAuditEmp.id);
+      setSelectedAuditEmp(updated || null);
+    }
+  }, [payrollData]);
 
   // --- KIOSK ACTIONS ---
   const handlePunch = async (punchType) => {
@@ -155,46 +154,53 @@ export default function AttendanceManager({ isKioskMode = false }) {
       return setKioskMessage({ text: 'Incorrect PIN. Try again.', type: 'error' });
     }
 
-    const now = new Date();
-    const logData = {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      punchType: punchType,
-      timestamp: now.toISOString(),
-      dateStr: getTodayDateStr(),
-      editedByAdmin: false
-    };
-
     try {
+      // Fetch employee's complete punch history to validate sequence
+      const q = query(collection(firebaseDb, "erp_attendance"), where("employeeId", "==", employee.id));
+      const snap = await getDocs(q);
+      const empLogs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      const lastPunch = empLogs[0];
+
+      if (punchType === 'IN' && lastPunch && lastPunch.punchType === 'IN') {
+        setPin('');
+        return setKioskMessage({ text: 'ERROR: Missing previous Check-Out. Please ask an Admin to fix your timesheet before you can Check In.', type: 'error' });
+      }
+      if (punchType === 'OUT' && (!lastPunch || lastPunch.punchType === 'OUT')) {
+        setPin('');
+        return setKioskMessage({ text: 'ERROR: You cannot Check Out because you are not currently Checked In.', type: 'error' });
+      }
+
+      const now = new Date();
+      const logData = {
+        employeeId: employee.id,
+        employeeName: employee.name,
+        punchType: punchType,
+        timestamp: now.toISOString(),
+        dateStr: getTodayDateStr(),
+        editedByAdmin: false
+      };
+
       await addDoc(collection(firebaseDb, "erp_attendance"), logData);
       setKioskMessage({ text: `✅ Successfully checked ${punchType} at ${now.toLocaleTimeString()}`, type: 'success' });
       setSelectedEmp('');
       setPin('');
-      setTimeout(() => setKioskMessage({ text: '', type: '' }), 4000);
+      setTimeout(() => setKioskMessage({ text: '', type: '' }), 5000);
     } catch (error) {
       setKioskMessage({ text: 'Database connection error.', type: 'error' });
     }
   };
 
-
   // --- ADMIN ACTIONS ---
   const handleAddStaff = async (e) => {
     e.preventDefault();
     if (!newStaffName.trim() || !newStaffPin.trim() || !newStaffDesig.trim()) return alert("Name, Designation, and PIN are required.");
-    
     try {
       await addDoc(collection(firebaseDb, "erp_employees"), {
-        name: newStaffName.trim(),
-        designation: newStaffDesig.trim(),
-        pin: newStaffPin.trim(),
-        createdAt: new Date().toISOString()
+        name: newStaffName.trim(), designation: newStaffDesig.trim(), pin: newStaffPin.trim(), createdAt: new Date().toISOString()
       });
-      setNewStaffName(''); setNewStaffDesig(''); setNewStaffPin('');
-      fetchEmployees();
+      setNewStaffName(''); setNewStaffDesig(''); setNewStaffPin(''); fetchEmployees();
       alert("✅ Staff member added successfully!");
-    } catch (error) {
-      alert("Error saving staff member.");
-    }
+    } catch (error) { alert("Error saving staff member."); }
   };
 
   const handleDeleteStaff = async (id) => {
@@ -202,36 +208,35 @@ export default function AttendanceManager({ isKioskMode = false }) {
       try {
         await deleteDoc(doc(firebaseDb, "erp_employees", id));
         fetchEmployees();
-      } catch (error) {
-        alert("Error deleting staff member.");
-      }
+      } catch (error) { alert("Error deleting staff member."); }
     }
   };
 
   const handleFixPunch = async (e) => {
     e.preventDefault();
     if (!editingPunch.timestamp) return;
-
     try {
       if (editingPunch.isNew) {
         await addDoc(collection(firebaseDb, "erp_attendance"), {
-          employeeId: editingPunch.employeeId,
-          employeeName: editingPunch.employeeName,
-          punchType: editingPunch.type,
-          timestamp: new Date(editingPunch.timestamp).toISOString(),
-          dateStr: editingPunch.timestamp.split('T')[0],
-          editedByAdmin: true
+          employeeId: editingPunch.employeeId, employeeName: editingPunch.employeeName, punchType: editingPunch.type,
+          timestamp: new Date(editingPunch.timestamp).toISOString(), dateStr: editingPunch.timestamp.split('T')[0], editedByAdmin: true
         });
       } else {
         await updateDoc(doc(firebaseDb, "erp_attendance", editingPunch.id), { 
-          timestamp: new Date(editingPunch.timestamp).toISOString(), 
-          editedByAdmin: true 
+          timestamp: new Date(editingPunch.timestamp).toISOString(), editedByAdmin: true 
         });
       }
       setEditingPunch(null);
       fetchLogs(); 
-    } catch (error) {
-      alert("Error updating timesheet log.");
+    } catch (error) { alert("Error updating timesheet log."); }
+  };
+
+  const handleDeletePunch = async (punchId) => {
+    if (window.confirm("Are you sure you want to completely delete this time log?")) {
+      try {
+        await deleteDoc(doc(firebaseDb, "erp_attendance", punchId));
+        fetchLogs();
+      } catch (error) { alert("Error deleting log."); }
     }
   };
 
@@ -239,25 +244,43 @@ export default function AttendanceManager({ isKioskMode = false }) {
   const exportPayroll = (format) => {
     if (payrollData.length === 0) return alert("No payroll data to export.");
     const headers = ['Employee Name', 'Designation', 'Total Shifts', 'Total Hours Worked', 'Missing Check-Outs'];
-    const dataRows = payrollData.map(row => [
-      row.name, row.designation, row.shifts, formatDuration(row.totalMs), row.missingOuts
-    ]);
+    const dataRows = payrollData.map(row => [row.name, row.designation, row.shifts, formatDuration(row.totalMs), row.missingOuts]);
 
     if (format === 'excel') {
       const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Payroll");
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Payroll");
       XLSX.writeFile(wb, `Ali_Kitchen_Payroll_${startDate}_to_${endDate}.xlsx`);
     } else {
-      const doc = new jsPDF();
-      doc.setFontSize(16); doc.text(`Payroll Summary (${startDate} to ${endDate})`, 14, 20);
+      const doc = new jsPDF(); doc.setFontSize(16); doc.text(`Payroll Summary (${startDate} to ${endDate})`, 14, 20);
       autoTable(doc, { startY: 30, head: [headers], body: dataRows, theme: 'grid' });
       doc.save(`Ali_Kitchen_Payroll_${startDate}_to_${endDate}.pdf`);
     }
   };
 
+  const exportAudit = (format) => {
+    if (!selectedAuditEmp || selectedAuditEmp.rawPairs.length === 0) return alert("No details to export.");
+    const headers = ['Date', 'Check-In', 'Check-Out', 'Shift Duration'];
+    const dataRows = selectedAuditEmp.rawPairs.map(pair => [
+      pair.date,
+      pair.in ? new Date(pair.in.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Missing',
+      pair.out ? new Date(pair.out.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Missing',
+      pair.out ? formatDuration(pair.durationMs) : 'Incomplete'
+    ]);
+    const fileName = `${selectedAuditEmp.name.replace(/\s+/g, '_')}_Timesheet_${startDate}_to_${endDate}`;
 
-  // --- VIEWS (Render Functions to prevent cursor focus loss) ---
+    if (format === 'excel') {
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Details");
+      XLSX.writeFile(wb, `${fileName}.xlsx`);
+    } else {
+      const doc = new jsPDF(); doc.setFontSize(16); doc.text(`Timesheet Audit: ${selectedAuditEmp.name}`, 14, 20);
+      doc.setFontSize(12); doc.text(`Period: ${startDate} to ${endDate}`, 14, 28);
+      autoTable(doc, { startY: 35, head: [headers], body: dataRows, theme: 'grid' });
+      doc.save(`${fileName}.pdf`);
+    }
+  };
+
+  // --- VIEWS ---
 
   const renderKioskView = () => (
     <div style={{ maxWidth: '400px', margin: '0 auto', background: theme.cardBg, borderRadius: '12px', padding: '32px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', textAlign: 'center' }}>
@@ -280,9 +303,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
           </select>
 
           <input 
-            type="password" 
-            placeholder="Enter 4-Digit PIN" 
-            value={pin} 
+            type="password" placeholder="Enter 4-Digit PIN" value={pin} 
             onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
             style={{ width: '100%', padding: '16px', fontSize: '28px', textAlign: 'center', letterSpacing: '12px', borderRadius: '8px', border: `2px solid ${theme.border}`, outline: 'none', background: '#fff', boxSizing: 'border-box', fontWeight: '900' }} 
           />
@@ -307,8 +328,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   const renderAdminView = () => (
     <div style={{ background: theme.cardBg, borderRadius: '12px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
-      
-      {/* Admin Tabs */}
       <div style={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, background: '#f8fafc', borderRadius: '12px 12px 0 0' }}>
         <button onClick={() => setAdminSubTab('payroll')} style={{ flex: 1, padding: '16px', background: adminSubTab === 'payroll' ? '#fff' : 'transparent', border: 'none', borderBottom: adminSubTab === 'payroll' ? `3px solid ${theme.highlight}` : '3px solid transparent', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: adminSubTab === 'payroll' ? theme.highlight : theme.textMuted }}>
           <Calculator size={18} /> Payroll Summary
@@ -319,7 +338,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
       </div>
 
       <div style={{ padding: '24px' }}>
-        
         {adminSubTab === 'payroll' && !selectedAuditEmp && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
@@ -371,9 +389,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
                             </span>
                           ) : <span style={{ color: theme.success, fontWeight: '800' }}>Perfect</span>}
                         </td>
-                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: theme.highlight }}>
-                          {formatDuration(row.totalMs)}
-                        </td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: theme.highlight }}>{formatDuration(row.totalMs)}</td>
                         <td style={{ padding: '16px', textAlign: 'center' }}>
                           <button onClick={() => setSelectedAuditEmp(row)} style={{ padding: '6px 12px', background: '#f1f5f9', border: `1px solid ${theme.border}`, borderRadius: '6px', cursor: 'pointer', fontWeight: '700', color: theme.textMain, fontSize: '12px' }}>
                             View Details
@@ -388,14 +404,19 @@ export default function AttendanceManager({ isKioskMode = false }) {
           </div>
         )}
 
-        {/* DRILL-DOWN AUDIT VIEW */}
         {adminSubTab === 'payroll' && selectedAuditEmp && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-              <button onClick={() => setSelectedAuditEmp(null)} style={{ padding: '8px', background: '#f1f5f9', border: 'none', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={20}/></button>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '900' }}>{selectedAuditEmp.name}'s Timesheet</h2>
-                <p style={{ margin: 0, fontSize: '13px', color: theme.textMuted, fontWeight: '600' }}>Period: {startDate} to {endDate} | Total: {formatDuration(selectedAuditEmp.totalMs)}</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button onClick={() => setSelectedAuditEmp(null)} style={{ padding: '8px', background: '#f1f5f9', border: 'none', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={20}/></button>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '900' }}>{selectedAuditEmp.name}'s Timesheet</h2>
+                  <p style={{ margin: 0, fontSize: '13px', color: theme.textMuted, fontWeight: '600' }}>Period: {startDate} to {endDate} | Total: {formatDuration(selectedAuditEmp.totalMs)}</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => exportAudit('excel')} style={{ padding: '8px 12px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}><FileSpreadsheet size={14}/> Export Details</button>
+                <button onClick={() => exportAudit('pdf')} style={{ padding: '8px 12px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}><FileText size={14}/> PDF</button>
               </div>
             </div>
 
@@ -415,17 +436,23 @@ export default function AttendanceManager({ isKioskMode = false }) {
                       <td style={{ padding: '16px', fontWeight: '700', fontSize: '14px' }}>{pair.date}</td>
                       <td style={{ padding: '16px', fontSize: '14px' }}>
                         {pair.in ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <span style={{ fontWeight: '700', color: theme.success }}>{new Date(pair.in.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            <button onClick={() => setEditingPunch(pair.in)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: theme.textMuted }}><Edit2 size={12}/></button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => setEditingPunch(pair.in)} style={{ border: 'none', background: '#f1f5f9', padding: '6px', borderRadius: '4px', cursor: 'pointer', color: theme.textMain }}><Edit2 size={12}/></button>
+                              <button onClick={() => handleDeletePunch(pair.in.id)} style={{ border: 'none', background: '#fee2e2', padding: '6px', borderRadius: '4px', cursor: 'pointer', color: theme.danger }}><Trash2 size={12}/></button>
+                            </div>
                           </div>
                         ) : <span style={{ color: theme.textMuted }}>Missing</span>}
                       </td>
                       <td style={{ padding: '16px', fontSize: '14px' }}>
                         {pair.out ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <span style={{ fontWeight: '700', color: theme.danger }}>{new Date(pair.out.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            <button onClick={() => setEditingPunch(pair.out)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: theme.textMuted }}><Edit2 size={12}/></button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => setEditingPunch(pair.out)} style={{ border: 'none', background: '#f1f5f9', padding: '6px', borderRadius: '4px', cursor: 'pointer', color: theme.textMain }}><Edit2 size={12}/></button>
+                              <button onClick={() => handleDeletePunch(pair.out.id)} style={{ border: 'none', background: '#fee2e2', padding: '6px', borderRadius: '4px', cursor: 'pointer', color: theme.danger }}><Trash2 size={12}/></button>
+                            </div>
                           </div>
                         ) : (
                           <button onClick={() => setEditingPunch({ isNew: true, employeeId: selectedAuditEmp.id, employeeName: selectedAuditEmp.name, type: 'OUT', timestamp: `${pair.date}T17:00` })} style={{ background: theme.danger, color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>+ Add Out Time</button>
@@ -444,11 +471,8 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
         {adminSubTab === 'staff' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) 2fr', gap: '32px' }}>
-            
-            {/* Add Staff Form */}
             <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', border: `1px solid ${theme.border}`, alignSelf: 'start' }}>
               <h3 style={{ margin: '0 0 20px 0', fontSize: '16px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}><UserPlus size={18}/> Register Employee</h3>
-              
               <form onSubmit={handleAddStaff}>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px', color: theme.textMuted }}>Full Name</label>
@@ -462,13 +486,9 @@ export default function AttendanceManager({ isKioskMode = false }) {
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px', color: theme.textMuted }}>Kiosk PIN Code (4 Digits)</label>
                   <input type="text" value={newStaffPin} onChange={e => setNewStaffPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="e.g. 1234" maxLength={4} pattern="\d{4}" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', letterSpacing: '4px', textAlign: 'center', fontWeight: '800', fontSize: '18px' }} required />
                 </div>
-                <button type="submit" style={{ width: '100%', padding: '14px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
-                  Add to System
-                </button>
+                <button type="submit" style={{ width: '100%', padding: '14px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>Add to System</button>
               </form>
             </div>
-
-            {/* Existing Staff List */}
             <div>
               <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '800' }}>Active Employees</h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px' }}>
@@ -480,9 +500,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
                       <div style={{ fontSize: '12px', color: theme.textMuted, fontWeight: '700', marginBottom: '4px' }}>{emp.designation}</div>
                       <div style={{ fontSize: '11px', color: theme.highlight, fontWeight: '800', background: '#eff6ff', display: 'inline-block', padding: '2px 8px', borderRadius: '4px' }}>PIN: {emp.pin}</div>
                     </div>
-                    <button onClick={() => handleDeleteStaff(emp.id)} style={{ background: '#fee2e2', color: theme.danger, border: 'none', padding: '10px', borderRadius: '8px', cursor: 'pointer' }}>
-                      <Trash2 size={16} />
-                    </button>
+                    <button onClick={() => handleDeleteStaff(emp.id)} style={{ background: '#fee2e2', color: theme.danger, border: 'none', padding: '10px', borderRadius: '8px', cursor: 'pointer' }}><Trash2 size={16} /></button>
                   </div>
                 ))}
               </div>
@@ -495,26 +513,21 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, fontFamily: '"Inter", sans-serif' }}>
-      
-      {/* Top Navigation - Hides for non-admins to completely lock them into the kiosk */}
       {!effectiveKioskMode && (
         <div style={{ background: theme.cardBg, padding: '16px 24px', borderBottom: `1px solid ${theme.border}`, display: 'flex', gap: '16px' }}>
           <button onClick={() => setActiveTab('admin')} style={{ padding: '10px 20px', background: activeTab === 'admin' ? theme.primary : 'transparent', color: activeTab === 'admin' ? '#fff' : theme.textMuted, border: `1px solid ${activeTab === 'admin' ? theme.primary : theme.border}`, borderRadius: '24px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>Dashboard / Admin</button>
           <button onClick={() => setActiveTab('kiosk')} style={{ padding: '10px 20px', background: activeTab === 'kiosk' ? theme.primary : 'transparent', color: activeTab === 'kiosk' ? '#fff' : theme.textMuted, border: `1px solid ${activeTab === 'kiosk' ? theme.primary : theme.border}`, borderRadius: '24px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>Launch Floor Kiosk</button>
         </div>
       )}
-
       <div style={{ padding: '32px', maxWidth: '1400px', margin: '0 auto' }}>
         {activeTab === 'kiosk' ? renderKioskView() : renderAdminView()}
       </div>
 
-      {/* EDIT/ADD PUNCH MODAL */}
       {editingPunch && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#fff', padding: '32px', borderRadius: '16px', width: '360px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
             <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '900' }}>{editingPunch.isNew ? 'Add Missing Punch' : 'Edit Time Log'}</h3>
             <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: theme.textMuted, fontWeight: '600' }}>Employee: {editingPunch.employeeName} ({editingPunch.type})</p>
-            
             <form onSubmit={handleFixPunch}>
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: '800', marginBottom: '8px', color: theme.textMain }}>Corrected Timestamp</label>
