@@ -12,7 +12,7 @@ import Reports from './components/Reports.jsx';
 import FinancialStatements from './components/FinancialStatements.jsx';
 import Dashboard from './components/dashboard.jsx';
 import SystemSetup from './components/SystemSettings.jsx'; 
-import AttendanceManager from '.components/AttendanceManager.jsx';
+import AttendanceManager from './components/AttendanceManager.jsx';
 
 const tabIcons = {
   'Dashboard': Home,
