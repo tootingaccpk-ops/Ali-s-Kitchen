@@ -6,33 +6,15 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const defaultAccounts = [
-  { id: '1', name: 'Memon Services Ltd', category: 'Bank Account / Cash in Hand', balance: 0 },
-  { id: '2', name: 'Khanani Management', category: 'Bank Account / Cash in Hand', balance: 0 },
-  { id: '3', name: 'LK Associates', category: 'Bank Account / Cash in Hand', balance: 0 },
-  { id: '4', name: 'Safe Box (Main Cash)', category: 'Safe Box (Main Cash)', balance: 0 },
-  { id: '5', name: 'Physical Till Drawer', category: 'Physical Till Float', balance: 0 },
-  { id: '6', name: 'Cash in Hand', category: 'Bank Account / Cash in Hand', balance: 0 },
-  { id: '7', name: 'Booker Wholesale', category: 'Accounts Payable (Supplier)', balance: 0 },
-  { id: '8', name: 'JJ Food Service', category: 'Accounts Payable (Supplier)', balance: 0 },
-  { id: '9', name: 'British Gas', category: 'Accounts Payable (Supplier)', balance: 0 },
-  { id: '10', name: 'Food Supplies', category: 'Cost of Goods Sold (COGS)', balance: 0 },
-  { id: '11', name: 'Packaging', category: 'Cost of Goods Sold (COGS)', balance: 0 },
-  { id: '12', name: 'Utilities', category: 'Operating Expenses', balance: 0 },
-  { id: '13', name: 'Staff Payroll', category: 'Operating Expenses', balance: 0 },
-  { id: '14', name: 'Rent', category: 'Operating Expenses', balance: 0 },
-  { id: '15', name: 'Marketing', category: 'Operating Expenses', balance: 0 },
-  { id: '16', name: 'Repairs & Maintenance', category: 'Operating Expenses', balance: 0 },
-  { id: '17', name: 'VAT Input (Purchases)', category: 'Tax Liability / Asset', balance: 0 },
-  { id: '18', name: 'VAT Output (Sales)', category: 'Tax Liability / Asset', balance: 0 },
-  { id: '19', name: 'Owner Drawings', category: 'Equity / Owner Drawings', balance: 0 }
-];
+// NOTE: The hardcoded defaultAccounts list has been permanently removed.
+// The system will now strictly wait for and rely ONLY on your live Firebase database.
 
 const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets'];
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
 export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
-  const [localAccounts, setLocalAccounts] = useState(accounts.length > 0 ? accounts : defaultAccounts);
+  // Now initializes strictly with cloud accounts (or an empty list while waiting for the cloud)
+  const [localAccounts, setLocalAccounts] = useState(accounts || []);
   const [importStatus, setImportStatus] = useState('');
   
   const [customCategoryTypes, setCustomCategoryTypes] = useState(() => { try { return JSON.parse(localStorage.getItem('erp_custom_cat_types')) || {}; } catch(e) { return {}; } });
@@ -48,8 +30,9 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
   const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
+  // Safely updates the list only when Firebase actually finishes loading your accounts
   useEffect(() => {
-    if (accounts.length > 0) {
+    if (accounts && accounts.length > 0) {
       setLocalAccounts(accounts);
     }
   }, [accounts]);
@@ -184,7 +167,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const addAccount = () => { setLocalAccounts(prev => [...prev, { id: Date.now().toString(), name: '', category: '', balance: 0 }]); };
   const removeAccount = (id) => { setLocalAccounts(prev => prev.filter(acc => acc.id !== id)); };
 
-  const cancelChanges = () => { if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { setLocalAccounts(accounts.length > 0 ? accounts : defaultAccounts); } };
+  const cancelChanges = () => { if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { setLocalAccounts(accounts || []); } };
 
   const handleSaveCategory = (e) => {
     e.preventDefault();
@@ -205,7 +188,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const saveSettings = async () => {
     if (isSaving) return;
     
-    // Purge the invisible ghosts from the raw data before saving
     const cleanAccounts = [...localAccounts].reduce((acc, current) => {
       const nameKey = String(current.name || '').trim().toLowerCase();
       if (!nameKey) {
@@ -246,7 +228,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
     setCategoriesMap(newMap);
     setAccounts(cleanAccounts);
-    setLocalAccounts(cleanAccounts); // Permanently overwrites the ghosts
+    setLocalAccounts(cleanAccounts);
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
 
