@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, deleteDoc, writeBatch, addDoc } from "firebase/firestore";
 import { db as firebaseDb } from "../firebase"; 
-import { ShoppingCart, Plus, Trash2, Edit2, FileText, X, Search, FileSpreadsheet } from 'lucide-react';
+import { ShoppingCart, Plus, Trash2, Edit2, FileText, X, Search, FileSpreadsheet, Wallet, Link as LinkIcon, PlusCircle, Unlink } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+
+const isAdmin = true; 
 
 const getToday = () => {
   const ukTime = new Date().toLocaleString("en-US", { timeZone: "Europe/London" });
@@ -37,7 +39,6 @@ const formatDate = (dateStr) => {
   return dateStr;
 };
 
-// STRICT MONEY FORMATTER
 const fmtMoney = (n) => {
   if (n === '' || n === null || n === undefined) return '';
   const num = Number(n);
@@ -48,10 +49,9 @@ const fmtMoney = (n) => {
 const getEmptyLine = () => ({ id: Date.now() + Math.random(), account: '', gross: '', vat: '' });
 
 const getInitialForm = () => ({
-  id: '', date: getToday(), supplier: '', refNo: '', description: '', lines: [getEmptyLine()]
+  id: '', date: getToday(), supplier: '', refNo: '', status: 'Finalized', paymentStatus: 'Unpaid', description: '', lines: [getEmptyLine()]
 });
 
-// === SPREADSHEET-STYLE UI THEME ===
 const sheetTheme = {
   border: '#d1d5db', font: '"Arial", "Calibri", sans-serif', labelBg: '#f8fafc', calcBg: '#f1f5f9',
   headerBlueBg: '#e0f2fe', headerBlueText: '#0369a1', headerGreenBg: '#dcfce7', headerGreenText: '#166534',
@@ -61,7 +61,6 @@ const sheetTheme = {
 const labelTd = { border: `1px solid ${sheetTheme.border}`, padding: '8px 12px', fontSize: '13px', color: '#333', background: sheetTheme.labelBg, whiteSpace: 'nowrap', width: '30%', fontWeight: '600' };
 const inputTd = { border: `1px solid ${sheetTheme.border}`, padding: '0', background: '#fff', width: '70%' };
 
-// SMART CELL INPUT
 const CellInput = ({ name, value, onChange, onKeyDown, type="number", placeholder="", align="right", inputRef=null, textColor="#000" }) => {
   const [isFocused, setIsFocused] = useState(false);
   
@@ -90,14 +89,29 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
   const displayDb = db.length > 0 ? db : (JSON.parse(localStorage.getItem('erp_purchases')) || []);
   const [formData, setFormData] = useState(getInitialForm());
   const [activeModal, setActiveModal] = useState(null); 
+  const [paymentModal, setPaymentModal] = useState(null);
+  
   const [newLedgerName, setNewLedgerName] = useState('');
+  const [newLedgerCategory, setNewLedgerCategory] = useState('');
   const dateInputRef = useRef(null);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterStatus, setFilterStatus] = useState('All');
 
-  // MIGRATION SCRIPT FOR PURCHASES
+  const bankAccounts = accountsDb.filter(acc => { const cat = String(acc.category || '').toLowerCase(); return cat.includes('bank') || cat.includes('cash') || cat.includes('safe') || cat.includes('till'); }).sort((a, b) => a.name.localeCompare(b.name));
+  
+  const allCategories = useMemo(() => {
+    const baseCats = ["Accounts Payable (Supplier)", "Cost of Goods Sold (COGS)", "Operating Expenses", "Fixed Assets", "Tax Liability / Asset"];
+    const currentCats = accountsDb.map(a => (a.category || '').trim()).filter(Boolean);
+    return Array.from(new Set([...baseCats, ...currentCats])).sort((a, b) => a.localeCompare(b));
+  }, [accountsDb]);
+
+  const allAccountsSorted = useMemo(() => {
+    return [...accountsDb].sort((a, b) => a.name.localeCompare(b.name));
+  }, [accountsDb]);
+
   useEffect(() => {
     const migratePurchasesToFirebase = async () => {
       const localData = JSON.parse(localStorage.getItem('erp_purchases'));
@@ -105,7 +119,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
       
       if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
         try {
-          console.log("Migrating Purchases to Firebase...");
           const batch = writeBatch(firebaseDb);
           localData.forEach(record => {
             const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
@@ -114,7 +127,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
           });
           await batch.commit();
           localStorage.setItem('erp_purchases_migrated', 'true');
-          console.log("Purchases Migration Complete!");
         } catch (error) {
           console.error("Migration failed: ", error);
         }
@@ -123,7 +135,6 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     migratePurchasesToFirebase();
   }, []);
 
-  const suppliers = accountsDb.filter(acc => String(acc.category).includes('Accounts Payable') || String(acc.category).includes('Supplier')).sort((a, b) => a.name.localeCompare(b.name));
   const purchasesAccounts = accountsDb.filter(acc => String(acc.category).toLowerCase().includes('cost of goods sold') || String(acc.category).toLowerCase().includes('cogs') || String(acc.category).toLowerCase().includes('purchase')).sort((a, b) => a.name.localeCompare(b.name));
   const expenseAccounts = accountsDb.filter(acc => String(acc.category).toLowerCase().includes('operating expense') || String(acc.category).toLowerCase().includes('expense') && !String(acc.category).toLowerCase().includes('cogs')).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -182,6 +193,18 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const supplierName = (formData.supplier || '').trim().toLowerCase();
+    const conflictingAccount = accountsDb.find(a => 
+      a.name.toLowerCase() === supplierName && 
+      !String(a.category).toLowerCase().includes('payable') && 
+      !String(a.category).toLowerCase().includes('supplier')
+    );
+    
+    if (conflictingAccount) {
+        return alert(`⚠️ Validation Error:\n\nYou have entered an Accounting Ledger name ("${formData.supplier}") into the Supplier field.\n\nThe Supplier field should be the brand/company name (e.g., 'Amazon'), and the Account field should be the category (e.g., '${formData.supplier}').\n\nPlease swap them!`);
+    }
+
     if (!window.confirm(formData.id ? "Are you sure you want to update this invoice?" : "Are you sure you want to save this invoice?")) return; 
     
     const validLines = formData.lines.filter(l => l.account || l.gross || l.vat);
@@ -189,6 +212,8 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     const invoiceRecord = { 
       ...formData, 
       id: recordId, 
+      status: formData.status || 'Finalized',
+      paymentStatus: formData.paymentStatus || 'Unpaid',
       lines: validLines.length > 0 ? validLines : [{ account: '', gross: 0, vat: 0 }], 
       totalGross: totals.gross, 
       totalVat: totals.vat, 
@@ -206,19 +231,138 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     
     try {
       await setDoc(doc(firebaseDb, "erp_purchases", recordId), invoiceRecord);
-      
       alert(formData.id ? `✅ Invoice updated successfully!` : `✅ Invoice saved successfully!`);
       setFormData(getInitialForm());
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setTimeout(() => { if(dateInputRef.current) dateInputRef.current.focus(); }, 50);
     } catch (error) {
-      console.error("Error saving purchase to Firebase: ", error);
       alert("Database Error: Could not save the invoice.");
     }
   };
 
+  const openPaymentModal = async (row) => {
+    setPaymentModal({ isLoading: true });
+    try {
+      const querySnapshot = await getDocs(collection(firebaseDb, "erp_receipts"));
+      const receipts = [];
+      querySnapshot.forEach((doc) => receipts.push(doc.data()));
+      
+      const unlinked = receipts.filter(r => r.type === 'Payment' && !r.linkedInvoiceId && !(r.description || '').includes('Automated Payment for Inv/Ref'));
+      unlinked.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      setPaymentModal({
+        invoice: row,
+        tab: 'link',
+        unlinkedReceipts: unlinked,
+        searchStr: '',
+        showAllUnlinked: false,
+        date: getToday(),
+        bankName: '',
+        amount: row.totalGross,
+        isLoading: false
+      });
+    } catch (error) {
+      alert("Failed to load existing payments. Please check connection.");
+      setPaymentModal(null);
+    }
+  };
+
+  const handleLinkPayment = async (receipt) => {
+    if (!window.confirm(`Are you sure you want to link the payment of £${receipt.amount} to this invoice?`)) return;
+
+    try {
+      const batch = writeBatch(firebaseDb);
+      const updatedReceipt = {
+          ...receipt,
+          linkedInvoiceId: paymentModal.invoice.id,
+          account: paymentModal.invoice.supplier || 'Unassigned Supplier',
+          category: 'Accounts Payable (Supplier)',
+          payee: paymentModal.invoice.supplier || receipt.payee,
+          description: `Linked to Inv/Ref: ${paymentModal.invoice.refNo} | ${receipt.description}`
+      };
+      batch.set(doc(firebaseDb, "erp_receipts", receipt.id), updatedReceipt);
+
+      const updatedInvoice = { ...paymentModal.invoice, paymentStatus: 'Paid' };
+      batch.set(doc(firebaseDb, "erp_purchases", updatedInvoice.id), updatedInvoice);
+      
+      await batch.commit();
+
+      if (setDb) setDb(prev => prev.map(t => t.id === updatedInvoice.id ? updatedInvoice : t));
+      alert("✅ Payment successfully linked! The receipt has been re-coded to Accounts Payable to prevent P&L duplication.");
+      setPaymentModal(null);
+    } catch (err) {
+      alert("Database Error: Could not link the payment.");
+    }
+  };
+
+  const handleRecordNewPayment = async (e) => {
+    e.preventDefault();
+    if (!paymentModal.bankName) return alert("Please select a bank account.");
+
+    const receiptId = Date.now().toString();
+    const receiptRecord = {
+        id: receiptId,
+        type: 'Payment',
+        date: paymentModal.date,
+        mode: 'Bank',
+        bankName: paymentModal.bankName,
+        account: paymentModal.invoice.supplier || 'Unassigned Supplier',
+        category: 'Accounts Payable (Supplier)',
+        payee: paymentModal.invoice.supplier || '',
+        description: `Automated Payment for Inv/Ref: ${paymentModal.invoice.refNo}`,
+        amount: Number(paymentModal.amount),
+        linkedInvoiceId: paymentModal.invoice.id,
+        lines: [{ id: Date.now(), account: '', debit: '', credit: '', description: '' }, { id: Date.now() + 1, account: '', debit: '', credit: '', description: '' }]
+    };
+
+    const updatedInvoice = { ...paymentModal.invoice, paymentStatus: 'Paid' };
+
+    try {
+        const batch = writeBatch(firebaseDb);
+        batch.set(doc(firebaseDb, "erp_receipts", receiptId), receiptRecord);
+        batch.set(doc(firebaseDb, "erp_purchases", updatedInvoice.id), updatedInvoice);
+        await batch.commit();
+
+        if (setDb) setDb(prev => prev.map(t => t.id === updatedInvoice.id ? updatedInvoice : t));
+        alert("✅ New payment recorded successfully!");
+        setPaymentModal(null);
+    } catch (err) {
+        alert("Database Error: Could not record the automated payment.");
+    }
+  };
+
+  const handleUnlinkPayment = async (invoice) => {
+    if (!isAdmin) return alert("Unauthorized: Only Administrators can unlink payments.");
+    if (!window.confirm(`Admin Action: Are you sure you want to completely UNLINK the payment for ${invoice.supplier}? The payment will be returned to the Unlinked Audit List.`)) return;
+
+    try {
+        const querySnapshot = await getDocs(collection(firebaseDb, "erp_receipts"));
+        let linkedReceipt = null;
+        querySnapshot.forEach(doc => {
+            if(doc.data().linkedInvoiceId === invoice.id) linkedReceipt = doc.data();
+        });
+
+        const batch = writeBatch(firebaseDb);
+        if (linkedReceipt) {
+            const updatedReceipt = { ...linkedReceipt, linkedInvoiceId: null };
+            updatedReceipt.description = (updatedReceipt.description || '').replace(`Linked to Inv/Ref: ${invoice.refNo} | `, '').replace(`Automated Payment for Inv/Ref: ${invoice.refNo}`, 'UNLINKED AUTOMATED PAYMENT');
+            batch.set(doc(firebaseDb, "erp_receipts", linkedReceipt.id), updatedReceipt);
+        }
+
+        const updatedInvoice = { ...invoice, paymentStatus: 'Unpaid' };
+        batch.set(doc(firebaseDb, "erp_purchases", invoice.id), updatedInvoice);
+        
+        await batch.commit();
+
+        if (setDb) setDb(prev => prev.map(t => t.id === invoice.id ? updatedInvoice : t));
+        alert("✅ Link severed. Invoice is unpaid, and payment is back in the audit log.");
+    } catch(err) {
+        alert("Database Error: Could not process unlink action.");
+    }
+  };
+
   const handleEdit = (row) => {
-    setFormData({ ...row, lines: row.lines?.length > 0 ? row.lines.map(l => ({ ...l })) : [getEmptyLine()] });
+    setFormData({ ...row, status: row.status || 'Finalized', lines: row.lines?.length > 0 ? row.lines.map(l => ({ ...l })) : [getEmptyLine()] });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -226,37 +370,43 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
     if (window.confirm("Are you sure you want to delete this invoice?")) {
       const newDb = displayDb.filter(t => t.id !== id);
       if (setDb) setDb(newDb);
-      
-      try {
-        await deleteDoc(doc(firebaseDb, "erp_purchases", id));
-      } catch (error) {
-        console.error("Error deleting purchase from Firebase: ", error);
-        alert("Database Error: Could not delete the invoice.");
-      }
+      try { await deleteDoc(doc(firebaseDb, "erp_purchases", id)); } catch (error) { alert("Database Error: Could not delete the invoice."); }
     }
   };
 
-  const handleAddNewLedger = (e) => {
+  const handleAddNewLedger = async (e) => {
     e.preventDefault();
-    if (!newLedgerName) return;
-
-    const newLedger = { id: Date.now().toString(), name: newLedgerName, type: activeModal?.type === 'supplier' ? 'Liability' : 'Expense', category: activeModal?.type === 'supplier' ? 'Accounts Payable (Supplier)' : 'Operating Expenses', balance: 0 };
-    setAccountsDb(prev => [...prev, newLedger]);
+    if (!newLedgerName || !newLedgerCategory) return;
+    const ledgerNameTrimmed = newLedgerName.trim();
     
-    if (activeModal?.type === 'supplier') {
-      setFormData(prev => ({ ...prev, supplier: newLedger.name }));
-    } else if (activeModal?.type === 'category' && activeModal.lineIndex !== undefined) {
-      handleLineChange(activeModal.lineIndex, 'account', newLedger.name);
+    const existingMatch = accountsDb.find(a => a.name.toLowerCase() === ledgerNameTrimmed.toLowerCase());
+    if (existingMatch) {
+      if (activeModal?.type === 'supplier') { setFormData(prev => ({ ...prev, supplier: existingMatch.name })); } 
+      else if (activeModal?.type === 'category' && activeModal.lineIndex !== undefined) { handleLineChange(activeModal.lineIndex, 'account', existingMatch.name); }
+      setNewLedgerName(''); setNewLedgerCategory(''); setActiveModal(null);
+      return;
     }
-    setNewLedgerName('');
-    setActiveModal(null);
+
+    const newLedger = { name: ledgerNameTrimmed, type: newLedgerCategory.includes('Payable') ? 'Liability' : 'Expense', category: newLedgerCategory, balance: 0 };
+    
+    try {
+      const docRef = await addDoc(collection(firebaseDb, "erp_accounts"), newLedger);
+      const finalLedger = { id: docRef.id, ...newLedger };
+      setAccountsDb(prev => [...prev, finalLedger]);
+
+      if (activeModal?.type === 'supplier') { setFormData(prev => ({ ...prev, supplier: finalLedger.name })); } 
+      else if (activeModal?.type === 'category' && activeModal.lineIndex !== undefined) { handleLineChange(activeModal.lineIndex, 'account', finalLedger.name); }
+      
+      setNewLedgerName(''); setNewLedgerCategory(''); setActiveModal(null);
+    } catch (err) {
+      alert("Failed to create account in the cloud.");
+    }
   };
 
   const filteredDb = useMemo(() => {
-    let result = displayDb;
-    if (filterDateFrom && filterDateTo) {
-       result = result.filter(row => { const rDate = toDateNum(row.date); return rDate >= toDateNum(filterDateFrom) && rDate <= toDateNum(filterDateTo); });
-    }
+    let result = [...displayDb];
+    if (filterStatus === 'Pending') result = result.filter(row => row.status === 'Pending');
+    if (filterDateFrom && filterDateTo) result = result.filter(row => { const rDate = toDateNum(row.date); return rDate >= toDateNum(filterDateFrom) && rDate <= toDateNum(filterDateTo); });
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       result = result.filter(row => {
@@ -264,22 +414,23 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
         return (String(row.supplier || '').toLowerCase().includes(term) || String(row.refNo || '').toLowerCase().includes(term) || String(row.description || '').toLowerCase().includes(term) || String(row.totalGross || '').includes(term) || String(formatDate(row.date) || '').includes(term) || linesStr.includes(term));
       });
     }
-    return result;
-  }, [displayDb, searchTerm, filterDateFrom, filterDateTo]);
+    // Enforce strict date descending sort (Newest first)
+    return result.sort((a, b) => toDateNum(b.date) - toDateNum(a.date));
+  }, [displayDb, searchTerm, filterDateFrom, filterDateTo, filterStatus]);
 
   const handleExport = (format) => {
     if (filteredDb.length === 0) return alert("No invoices available to export.");
-    const headers = ['Date', 'Supplier', 'Ref #', 'Description', 'Expense Accounts Used', 'Total VAT (£)', 'Total Gross (£)'];
-    const dataRows = filteredDb.map(row => [ formatDate(row.date), row.supplier || 'Unassigned', row.refNo || '-', row.description || '-', row.lines?.map(l => l.account).filter(Boolean).join(', ') || 'None', fmtMoney(row.totalVat), fmtMoney(row.totalGross) ]);
+    const headers = ['Date', 'Supplier', 'Status', 'Ref #', 'Description', 'Expense Accounts', 'Total VAT (£)', 'Total Gross (£)'];
+    const dataRows = filteredDb.map(row => [ formatDate(row.date), row.supplier || 'Unassigned', row.status === 'Pending' ? 'Pending' : 'Finalized', row.refNo || '-', row.description || '-', row.lines?.map(l => l.account).filter(Boolean).join(', ') || 'None', fmtMoney(row.totalVat), fmtMoney(row.totalGross) ]);
 
     if (format === 'excel') {
-      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="7" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="7" style="font-size: 14px; font-weight: bold; border: none;">Purchases & Expenses Log</td></tr><tr><td colspan="7" style="font-size: 12px; color: #555; border: none;">Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}</td></tr><tr><td colspan="7" style="border: none;"></td></tr><tr>`;
-      headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; ${i >= 5 ? 'text-align: right;' : 'text-align: left;'}">${h}</th>`; }); html += `</tr>`;
-      dataRows.forEach(row => { html += `<tr>`; row.forEach((val, idx) => { html += `<td style="border: 1px solid #cbd5e1; padding: 8px; ${idx >= 5 ? 'text-align: right;' : 'text-align: left;'}">${val}</td>`; }); html += `</tr>`; }); html += `</table></body></html>`;
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="8" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="8" style="font-size: 14px; font-weight: bold; border: none;">Purchases & Expenses Log</td></tr><tr><td colspan="8" style="font-size: 12px; color: #555; border: none;">Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}</td></tr><tr><td colspan="8" style="border: none;"></td></tr><tr>`;
+      headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; ${i >= 6 ? 'text-align: right;' : 'text-align: left;'}">${h}</th>`; }); html += `</tr>`;
+      dataRows.forEach(row => { html += `<tr>`; row.forEach((val, idx) => { html += `<td style="border: 1px solid #cbd5e1; padding: 8px; ${idx >= 6 ? 'text-align: right;' : 'text-align: left;'}">${val}</td>`; }); html += `</tr>`; }); html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Purchases_Log.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
       const doc = new jsPDF('l', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen", 40, 40); doc.setFontSize(14); doc.text("Purchases & Expenses Log", 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${filterDateFrom ? formatDate(filterDateFrom) : 'All Time'} to ${filterDateTo ? formatDate(filterDateTo) : 'Present'}`, 40, 75);
-      autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 9, cellPadding: 5 }, styles: { fontSize: 8, cellPadding: 5 }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' } } });
+      autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 9, cellPadding: 5 }, styles: { fontSize: 8, cellPadding: 5 }, columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' } } });
       doc.save(`Purchases_Log.pdf`);
     }
   };
@@ -291,7 +442,7 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '12px', marginBottom: '16px' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'normal', color: '#1f2937' }}>Purchases & Expenses Log</h1>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>Record supplier invoices and split expenses with manual VAT.</p>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>Record formal supplier invoices, pre-payment placeholders, and expense splits.</p>
           </div>
         </div>
 
@@ -306,20 +457,38 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                 <td style={inputTd}><CellInput inputRef={dateInputRef} type="date" name="date" value={formData.date} onChange={handleHeaderChange} onKeyDown={handleKeyDown} align="right" required /></td>
               </tr>
               <tr>
+                <td style={labelTd}>Invoice Status</td>
+                <td style={inputTd}>
+                  <select name="status" value={formData.status || 'Finalized'} onChange={handleHeaderChange} onKeyDown={handleKeyDown} style={{ width: '100%', border: 'none', padding: '8px 12px', boxSizing: 'border-box', fontFamily: sheetTheme.font, fontSize: '13px', outline: 'none', background: 'transparent', fontWeight: '800', color: formData.status === 'Pending' ? '#c2410c' : '#166534' }}>
+                    <option value="Finalized">Finalized (Formal Invoice Logged)</option>
+                    <option value="Pending">Pending (Awaiting Formal Paperwork)</option>
+                  </select>
+                </td>
+              </tr>
+              <tr>
                 <td style={labelTd}>Supplier Account</td>
                 <td style={inputTd}>
                   <div style={{ display: 'flex' }}>
-                    <select name="supplier" value={formData.supplier} onChange={handleHeaderChange} onKeyDown={handleKeyDown} style={{ width: '100%', border: 'none', padding: '8px 12px', boxSizing: 'border-box', fontFamily: sheetTheme.font, fontSize: '13px', outline: 'none', background: 'transparent', color: '#c2410c', fontWeight: '700' }} required>
-                      <option value="">-- Choose Supplier --</option>
-                      {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                    </select>
-                    <button type="button" onClick={() => setActiveModal({ type: 'supplier' })} style={{ padding: '0 12px', background: '#f8fafc', color: '#c2410c', borderLeft: `1px solid ${sheetTheme.border}`, borderTop: 'none', borderRight: 'none', borderBottom: 'none', cursor: 'pointer', fontWeight: '800' }} title="Add New Supplier"><Plus size={14} /></button>
+                    <input 
+                      list="supplier-list"
+                      name="supplier" 
+                      value={formData.supplier} 
+                      onChange={handleHeaderChange} 
+                      onKeyDown={handleKeyDown} 
+                      placeholder="Type any supplier name or select from list..."
+                      style={{ width: '100%', border: 'none', padding: '8px 12px', boxSizing: 'border-box', fontFamily: sheetTheme.font, fontSize: '13px', outline: 'none', background: 'transparent', color: '#c2410c', fontWeight: '700' }} 
+                      required 
+                    />
+                    <datalist id="supplier-list">
+                      {allAccountsSorted.map(s => <option key={s.id} value={s.name}>{s.name} ({s.category})</option>)}
+                    </datalist>
+                    <button type="button" onClick={() => { setActiveModal({ type: 'supplier' }); setNewLedgerCategory('Accounts Payable (Supplier)'); }} style={{ padding: '0 12px', background: '#f8fafc', color: '#c2410c', borderLeft: `1px solid ${sheetTheme.border}`, borderTop: 'none', borderRight: 'none', borderBottom: 'none', cursor: 'pointer', fontWeight: '800' }} title="Add Formal Supplier Ledger"><Plus size={14} /></button>
                   </div>
                 </td>
               </tr>
               <tr>
                 <td style={labelTd}>Invoice / Ref #</td>
-                <td style={inputTd}><CellInput type="text" name="refNo" value={formData.refNo} onChange={handleHeaderChange} onKeyDown={handleKeyDown} placeholder="e.g. INV-1004" align="left" required /></td>
+                <td style={inputTd}><CellInput type="text" name="refNo" value={formData.refNo} onChange={handleHeaderChange} onKeyDown={handleKeyDown} placeholder={formData.status === 'Pending' ? "e.g. PENDING PAYMENT" : "e.g. INV-1004"} align="left" required /></td>
               </tr>
               <tr>
                 <td style={labelTd}>Description / Notes</td>
@@ -358,7 +527,7 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                             {expenseAccounts.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
                           </optgroup>
                         </select>
-                        <button type="button" onClick={() => setActiveModal({ type: 'category', lineIndex: index })} style={{ padding: '0 10px', background: '#f8fafc', color: '#64748b', borderLeft: `1px solid ${sheetTheme.border}`, borderTop: 'none', borderRight: 'none', borderBottom: 'none', cursor: 'pointer' }} title="Add New Ledger Account"><Plus size={14} /></button>
+                        <button type="button" onClick={() => { setActiveModal({ type: 'category', lineIndex: index }); setNewLedgerCategory('Operating Expenses'); }} style={{ padding: '0 10px', background: '#f8fafc', color: '#64748b', borderLeft: `1px solid ${sheetTheme.border}`, borderTop: 'none', borderRight: 'none', borderBottom: 'none', cursor: 'pointer' }} title="Add New Ledger Account"><Plus size={14} /></button>
                       </div>
                     </td>
                     <td style={{ padding: '0', border: `1px solid ${sheetTheme.border}` }}>
@@ -411,6 +580,9 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
           <div style={{ background: sheetTheme.headerBlueBg, padding: '12px', border: `1px solid ${sheetTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
             <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: sheetTheme.headerBlueText }}>Master Invoice Log</h2>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" onClick={() => setFilterStatus(prev => prev === 'Pending' ? 'All' : 'Pending')} style={{ padding: '6px 12px', background: filterStatus === 'Pending' ? '#c2410c' : '#fff', color: filterStatus === 'Pending' ? '#fff' : '#c2410c', border: `2px solid #c2410c`, borderRadius: '4px', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}>
+                {filterStatus === 'Pending' ? 'Clear Pending Filter' : 'View Pending Invoices'}
+              </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', padding: '4px 8px', border: `1px solid ${sheetTheme.border}` }}>
                 <span style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280' }}>FROM:</span>
                 <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font }} />
@@ -440,12 +612,24 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                 {filteredDb.length === 0 ? (
                   <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>No invoices match your search or date range.</td></tr>
                 ) : (
-                  filteredDb.map((row) => (
+                  filteredDb.map((row) => {
+                    const isPaid = row.paymentStatus === 'Paid';
+                    return (
                     <tr key={row.id}>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '600' }}>{formatDate(row.date)}</td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px' }}>
                         <div style={{ fontWeight: '700', color: '#1f2937' }}>{row.supplier || 'Unassigned'}</div>
-                        <div style={{ fontSize: '11px', color: '#6b7280' }}>{row.refNo}</div>
+                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Ref: {row.refNo}</div>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                            <div style={{ fontSize: '10px', fontWeight: '800', color: row.status === 'Pending' ? '#c2410c' : '#166534', background: row.status === 'Pending' ? '#ffedd5' : '#dcfce7', display: 'inline-block', padding: '2px 6px', borderRadius: '4px' }}>
+                                {row.status === 'Pending' ? 'PENDING' : 'FINALIZED'}
+                            </div>
+                            {isPaid && (
+                                <div style={{ fontSize: '10px', fontWeight: '800', color: '#0369a1', background: '#e0f2fe', display: 'inline-block', padding: '2px 6px', borderRadius: '4px' }}>
+                                    PAID
+                                </div>
+                            )}
+                        </div>
                       </td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', color: '#374151' }}>{row.description || '-'}</td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', color: '#374151' }}>
@@ -460,6 +644,17 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                         {fmtMoney(row.totalGross)}
                       </td>
                       <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, textAlign: 'center' }}>
+                        {!isPaid ? (
+                            <button onClick={() => openPaymentModal(row)} style={{ background: 'transparent', color: '#10b981', border: 'none', cursor: 'pointer', marginRight: '8px' }} title="Match or Record Payment">
+                                <Wallet size={14} />
+                            </button>
+                        ) : (
+                            isAdmin && (
+                                <button onClick={() => handleUnlinkPayment(row)} style={{ background: 'transparent', color: '#ef4444', border: 'none', cursor: 'pointer', marginRight: '8px' }} title="Admin: Unlink Payment">
+                                    <Unlink size={14} />
+                                </button>
+                            )
+                        )}
                         <button onClick={() => handleEdit(row)} style={{ background: 'transparent', color: '#0369a1', border: 'none', cursor: 'pointer', marginRight: '8px' }} title="Edit">
                           <Edit2 size={14} />
                         </button>
@@ -468,7 +663,7 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                         </button>
                       </td>
                     </tr>
-                  ))
+                  )})
                 )}
               </tbody>
             </table>
@@ -488,8 +683,101 @@ export default function PurchasesExpenses({ db = [], setDb, accountsDb = [], set
                 <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Name</label>
                 <input type="text" value={newLedgerName} onChange={e => setNewLedgerName(e.target.value)} placeholder={activeModal.type === 'supplier' ? 'e.g. Costco' : 'e.g. Cleaning Supplies'} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required autoFocus />
               </div>
-              <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', fontSize: '13px' }}>Save & Use</button>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Account Category</label>
+                <select value={newLedgerCategory} onChange={e => setNewLedgerCategory(e.target.value)} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required>
+                  <option value="">-- Select Category --</option>
+                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+              </div>
+              <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', fontSize: '13px' }}>Save & Sync to Cloud</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {paymentModal && !paymentModal.isLoading && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.8)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ background: '#fff', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', fontFamily: sheetTheme.font, display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+            <div style={{ padding: '16px 20px', background: '#059669', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Wallet size={18} /><h2 style={{ margin: 0, fontSize: '16px', fontWeight: '700' }}>Record or Match Payment</h2></div>
+              <button onClick={() => setPaymentModal(null)} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#fff' }}>✖</button>
+            </div>
+            
+            <div style={{ display: 'flex', background: '#f8fafc', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                <button onClick={() => setPaymentModal({...paymentModal, tab: 'link'})} style={{ flex: 1, padding: '12px', fontWeight: '700', fontSize: '13px', background: paymentModal.tab === 'link' ? '#fff' : 'transparent', color: paymentModal.tab === 'link' ? '#059669' : '#64748b', border: 'none', borderBottom: paymentModal.tab === 'link' ? `2px solid #059669` : 'none', cursor: 'pointer' }}><LinkIcon size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }}/> Match Existing Payment</button>
+                <button onClick={() => setPaymentModal({...paymentModal, tab: 'create'})} style={{ flex: 1, padding: '12px', fontWeight: '700', fontSize: '13px', background: paymentModal.tab === 'create' ? '#fff' : 'transparent', color: paymentModal.tab === 'create' ? '#059669' : '#64748b', border: 'none', borderBottom: paymentModal.tab === 'create' ? `2px solid #059669` : 'none', cursor: 'pointer' }}><PlusCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }}/> Create New Payment</button>
+            </div>
+
+            <div style={{ padding: '20px', overflowY: 'auto' }}>
+                <div style={{ background: '#f1f5f9', padding: '12px', borderRadius: '6px', border: `1px solid ${sheetTheme.border}`, marginBottom: '16px' }}>
+                    <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Paying Supplier: <strong style={{ color: '#0f172a' }}>{paymentModal.invoice.supplier}</strong></div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>Invoice Ref: <strong style={{ color: '#0f172a' }}>{paymentModal.invoice.refNo}</strong> | Amount Due: <strong style={{ color: '#dc2626' }}>£{fmtMoney(paymentModal.invoice.totalGross)}</strong></div>
+                </div>
+
+                {paymentModal.tab === 'link' && (
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <input type="text" placeholder="Search unlinked payments..." value={paymentModal.searchStr} onChange={e => setPaymentModal({...paymentModal, searchStr: e.target.value})} style={{ width: '50%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', fontSize: '13px' }} />
+                            
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600', color: '#475569' }}>
+                                <input type="checkbox" checked={paymentModal.showAllUnlinked} onChange={(e) => setPaymentModal({...paymentModal, showAllUnlinked: e.target.checked})} />
+                                Show all unlinked payments
+                            </label>
+                        </div>
+                        <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', maxHeight: '250px', overflowY: 'auto' }}>
+                            {paymentModal.unlinkedReceipts.filter(r => {
+                                const matchSearch = (String(r.amount).includes(paymentModal.searchStr) || String(r.date).includes(paymentModal.searchStr) || String(r.description).toLowerCase().includes(paymentModal.searchStr.toLowerCase()) || String(r.account).toLowerCase().includes(paymentModal.searchStr.toLowerCase()));
+                                const matchSupplier = paymentModal.showAllUnlinked || (r.account === paymentModal.invoice.supplier || r.payee === paymentModal.invoice.supplier);
+                                return matchSearch && matchSupplier;
+                            }).length === 0 ? (
+                                <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                                    {paymentModal.showAllUnlinked ? "No unlinked payments found in the system." : `No unlinked payments found matching supplier "${paymentModal.invoice.supplier}". Try checking "Show all unlinked payments" if the name was typed differently.`}
+                                </div>
+                            ) : (
+                                paymentModal.unlinkedReceipts.filter(r => {
+                                    const matchSearch = (String(r.amount).includes(paymentModal.searchStr) || String(r.date).includes(paymentModal.searchStr) || String(r.description).toLowerCase().includes(paymentModal.searchStr.toLowerCase()) || String(r.account).toLowerCase().includes(paymentModal.searchStr.toLowerCase()));
+                                    const matchSupplier = paymentModal.showAllUnlinked || (r.account === paymentModal.invoice.supplier || r.payee === paymentModal.invoice.supplier);
+                                    return matchSearch && matchSupplier;
+                                }).map(r => (
+                                    <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                                        <div>
+                                            <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a' }}>£{fmtMoney(r.amount)} <span style={{ color: '#64748b', fontWeight: '400', fontSize: '12px' }}>on {formatDate(r.date)}</span></div>
+                                            <div style={{ fontSize: '11px', color: '#475569', marginTop: '2px' }}>{r.account} {r.bankName ? `(${r.bankName})` : ''}</div>
+                                            <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>{r.description || 'No description'}</div>
+                                        </div>
+                                        <button type="button" onClick={() => handleLinkPayment(r)} style={{ padding: '6px 12px', background: '#e2e8f0', color: '#0f172a', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Link</button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {paymentModal.tab === 'create' && (
+                    <form onSubmit={handleRecordNewPayment} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Payment Date</label>
+                            <input type="date" value={paymentModal.date} onChange={e => setPaymentModal({...paymentModal, date: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box' }} required />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Payment From (Bank Account)</label>
+                            <select value={paymentModal.bankName} onChange={e => setPaymentModal({...paymentModal, bankName: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', background: '#fff' }} required>
+                            <option value="">-- Select Bank Account --</option>
+                            {bankAccounts.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Amount Paid (£)</label>
+                            <input type="number" step="any" value={paymentModal.amount} onChange={e => setPaymentModal({...paymentModal, amount: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', fontSize: '16px', fontWeight: '700', color: '#059669' }} required />
+                        </div>
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '12px' }}>
+                            <button type="button" onClick={() => setPaymentModal(null)} style={{ flex: 1, padding: '12px', background: '#f1f5f9', color: '#475569', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                            <button type="submit" style={{ flex: 2, padding: '12px', background: '#059669', color: '#fff', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Generate Payment</button>
+                        </div>
+                    </form>
+                )}
+            </div>
           </div>
         </div>
       )}

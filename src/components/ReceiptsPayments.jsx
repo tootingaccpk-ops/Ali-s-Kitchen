@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
-import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
-import { ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, Wallet, Landmark, Trash2, Edit2, FileText, Search, XCircle, Filter, FileSpreadsheet, BookOpen, Plus } from 'lucide-react';
+import { doc, setDoc, deleteDoc, writeBatch, addDoc, collection, getDocs } from "firebase/firestore";
+import { db as firebaseDb } from "../firebase"; 
+import { ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, Wallet, Landmark, Trash2, Edit2, FileText, Search, XCircle, Filter, FileSpreadsheet, BookOpen, Plus, AlertTriangle, Link as LinkIcon, Unlink } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -42,7 +42,8 @@ const fmtMoney = (n) => {
 };
 
 const initialForm = {
-  id: '', type: 'Payment', date: getToday(), mode: 'Cash', bankName: '', category: '', account: '', description: '', amount: '', fromBank: '', toBank: '', debitAccount: '', creditAccount: '',
+  id: '', type: 'Payment', date: getToday(), mode: 'Cash', bankName: '', category: '', account: '', payee: '', description: '', amount: '', fromBank: '', toBank: '', debitAccount: '', creditAccount: '',
+  noInvoiceRequired: false,
   lines: [{ id: Date.now(), account: '', debit: '', credit: '', description: '' }, { id: Date.now() + 1, account: '', debit: '', credit: '', description: '' }]
 };
 
@@ -72,21 +73,25 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
   const [filterDateTo, setFilterDateTo] = useState(getToday());
   const [filterCategory, setFilterCategory] = useState('All'); 
   const [filterType, setFilterType] = useState('All'); 
+  const [auditMode, setAuditMode] = useState(false);
 
   const [showCatModal, setShowCatModal] = useState(false);
   const [newCatData, setNewCatData] = useState({ name: '', type: 'Expense' });
   const [showAccModal, setShowAccModal] = useState(false);
   const [newAccData, setNewAccData] = useState({ name: '', category: '' });
+  
+  const [linkModal, setLinkModal] = useState(null);
 
-  // MIGRATION SCRIPT FOR RECEIPTS
+  const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
+  const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
+
   useEffect(() => {
-    const migrateReceiptsToFirebase = async () => {
-      const localData = JSON.parse(localStorage.getItem('erp_receipts'));
-      const isMigrated = localStorage.getItem('erp_receipts_migrated');
-      
-      if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
-        try {
-          console.log("Migrating Receipts & Payments to Firebase...");
+    const runStartupSync = async () => {
+      try {
+        const localData = JSON.parse(localStorage.getItem('erp_receipts'));
+        const isMigrated = localStorage.getItem('erp_receipts_migrated');
+        
+        if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
           const batch = writeBatch(firebaseDb);
           localData.forEach(record => {
             const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
@@ -95,14 +100,39 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
           });
           await batch.commit();
           localStorage.setItem('erp_receipts_migrated', 'true');
-          console.log("Receipts Migration Complete!");
-        } catch (error) {
-          console.error("Migration failed: ", error);
         }
+
+        const invSnapshot = await getDocs(collection(firebaseDb, "erp_purchases"));
+        const existingInvoiceIds = new Set();
+        invSnapshot.forEach(docSnap => existingInvoiceIds.add(docSnap.id));
+
+        let orphanCleaned = false;
+        const batchClean = writeBatch(firebaseDb);
+        const updatedDb = db.map(row => {
+          if (row.linkedInvoiceId && !existingInvoiceIds.has(row.linkedInvoiceId)) {
+            orphanCleaned = true;
+            const cleanedRow = { ...row };
+            delete cleanedRow.linkedInvoiceId;
+            cleanedRow.description = (cleanedRow.description || '').replace(/\| Linked to Inv\/Ref:.*?(?=\||$)/g, '').trim();
+            batchClean.set(doc(firebaseDb, "erp_receipts", cleanedRow.id), cleanedRow);
+            return cleanedRow;
+          }
+          return row;
+        });
+
+        if (orphanCleaned) {
+          await batchClean.commit();
+          if (setDb) setDb(updatedDb);
+        }
+      } catch (error) {
+        console.error("Startup sync/cleanup failed: ", error);
       }
     };
-    migrateReceiptsToFirebase();
-  }, []);
+    
+    if (db.length > 0) {
+      runStartupSync();
+    }
+  }, [db]);
 
   const bankAccounts = accountsDb.filter(acc => { const cat = String(acc.category || '').toLowerCase(); return cat.includes('bank') || cat.includes('cash') || cat.includes('safe') || cat.includes('till'); }).sort((a, b) => a.name.localeCompare(b.name));
   const allCategories = useMemo(() => {
@@ -113,9 +143,9 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
   const allAccountsSorted = [...accountsDb].sort((a, b) => a.name.localeCompare(b.name));
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type, checked } = e.target;
     setFormData(prev => {
-      const updates = { [name]: value };
+      const updates = { [name]: type === 'checkbox' ? checked : value };
       if (name === 'mode' && value === 'Cash') updates.bankName = '';
       return { ...prev, ...updates };
     });
@@ -153,15 +183,30 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' });
   };
 
-  const handleSaveAccount = (e) => {
+  const handleSaveAccount = async (e) => {
     e.preventDefault();
     if (!newAccData.name.trim() || !newAccData.category) return alert("Please provide both an Account Name and a Category.");
     const accName = newAccData.name.trim();
-    if (accountsDb.some(a => a.name.toLowerCase() === accName.toLowerCase() && a.category === newAccData.category)) return alert("This account already exists in this category!");
-    const newAccount = { id: Date.now().toString(), date: getToday(), category: newAccData.category, name: accName, type: categoriesMap[newAccData.category] || 'Expense', balance: 0 };
-    if (setAccountsDb) setAccountsDb(prev => [newAccount, ...prev]);
-    setFormData(prev => ({ ...prev, account: accName, category: newAccData.category }));
-    setShowAccModal(false); setNewAccData({ name: '', category: '' });
+    
+    const existingMatch = accountsDb.find(a => a.name.toLowerCase() === accName.toLowerCase());
+    if (existingMatch) {
+      setFormData(prev => ({ ...prev, account: existingMatch.name, category: existingMatch.category }));
+      setShowAccModal(false);
+      setNewAccData({ name: '', category: '' });
+      return;
+    }
+    
+    const newAccount = { date: getToday(), category: newAccData.category, name: accName, type: categoriesMap[newAccData.category] || 'Expense', balance: 0 };
+    
+    try {
+      const docRef = await addDoc(collection(firebaseDb, "erp_accounts"), newAccount);
+      const finalAccount = { id: docRef.id, ...newAccount };
+      if (setAccountsDb) setAccountsDb(prev => [finalAccount, ...prev]);
+      setFormData(prev => ({ ...prev, account: accName, category: newAccData.category }));
+      setShowAccModal(false); setNewAccData({ name: '', category: '' });
+    } catch (err) {
+      alert("Database Error: Could not create account.");
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -177,16 +222,14 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
 
   const handleEdit = (row) => {
     const accInDb = accountsDb.find(a => a.name === row.account);
-    const editedRow = { ...row, type: row.type === 'JV' ? 'Journal' : row.type, category: accInDb ? accInDb.category : row.category };
+    const editedRow = { ...row, type: row.type === 'JV' ? 'Journal' : row.type, category: row.category || (accInDb ? accInDb.category : '') };
     
-    // Auto-upgrade legacy single-line JVs to multi-line grid format for editing
     if (editedRow.type === 'Journal' && (!editedRow.lines || editedRow.lines.length === 0)) {
       editedRow.lines = [
         { id: 1, account: row.debitAccount || '', debit: row.amount, credit: '', description: row.description || '' },
         { id: 2, account: row.creditAccount || '', debit: '', credit: row.amount, description: row.description || '' }
       ];
     } else if (editedRow.type === 'Journal' && editedRow.lines) {
-      // Create fresh copies of lines so we don't accidentally mutate the original state
       editedRow.lines = editedRow.lines.map(l => ({...l})); 
     }
     
@@ -196,7 +239,19 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const transaction = { ...formData };
+
+    const payeeName = (formData.payee || '').trim().toLowerCase();
+    const conflictingAccount = accountsDb.find(a => 
+      a.name.toLowerCase() === payeeName && 
+      !String(a.category).toLowerCase().includes('payable') && 
+      !String(a.category).toLowerCase().includes('supplier')
+    );
+    
+    if (conflictingAccount) {
+        return alert(`⚠️ Validation Error:\n\nYou have entered an Accounting Ledger name ("${formData.payee}") into the Payee/Supplier field.\n\nThe Payee field should be the brand/company name (e.g., 'Amazon'), and the Account field should be the category (e.g., '${formData.payee}').\n\nPlease swap them!`);
+    }
+
+    const transaction = { ...formData, payee: formData.payee || '' };
 
     if (formData.type === 'Transfer') {
       if (!formData.fromBank || !formData.toBank) return alert("Please select both a 'From Bank' and a 'To Bank'.");
@@ -234,25 +289,179 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
       alert(`✅ ${formData.type === 'Journal' ? 'Compound JV' : formData.type} ${isNew ? 'saved' : 'updated'} successfully!`);
       setFormData({ ...initialForm, lines: [{ id: Date.now(), account: '', debit: '', credit: '', description: '' }, { id: Date.now() + 1, account: '', debit: '', credit: '', description: '' }] });
     } catch (error) {
-      console.error("Error saving receipt to Firebase: ", error);
       alert("Database Error: Could not save the transaction.");
     }
   };
 
   const handleDelete = async (id) => {
+    const targetRow = db.find(t => t.id === id);
     if (window.confirm("Are you sure you want to delete this transaction?")) { 
       if (setDb) setDb(prev => prev.filter(t => t.id !== id)); 
       try {
-        await deleteDoc(doc(firebaseDb, "erp_receipts", id));
+        const batch = writeBatch(firebaseDb);
+        batch.delete(doc(firebaseDb, "erp_receipts", id));
+
+        if (targetRow && targetRow.linkedInvoiceId) {
+            const invSnap = await getDocs(collection(firebaseDb, "erp_purchases"));
+            invSnap.forEach(invDoc => {
+                if (invDoc.id === targetRow.linkedInvoiceId) {
+                    batch.update(doc(firebaseDb, "erp_purchases", invDoc.id), { paymentStatus: 'Unpaid' });
+                }
+            });
+        }
+
+        await batch.commit();
       } catch (error) {
-        console.error("Error deleting from Firebase: ", error);
         alert("Database Error: Could not delete the transaction.");
       }
     }
   };
 
+  const handleUnlink = async (receipt) => {
+    if (!isAuthorizedAdminOrOwner) {
+      return alert("⛔ Access Denied: Unlinking transactions is restricted strictly to Admin and Owner roles.");
+    }
+
+    if (!window.confirm(`Are you sure you want to unlink this payment from its invoice? This will set the linked invoice back to Unpaid.`)) return;
+
+    try {
+      const batch = writeBatch(firebaseDb);
+      
+      const updatedReceipt = { ...receipt };
+      delete updatedReceipt.linkedInvoiceId;
+      updatedReceipt.description = (updatedReceipt.description || '').replace(/\| Linked to Inv\/Ref:.*?(?=\||$)/g, '').trim();
+      batch.set(doc(firebaseDb, "erp_receipts", updatedReceipt.id), updatedReceipt);
+
+      if (receipt.linkedInvoiceId) {
+        const invSnap = await getDocs(collection(firebaseDb, "erp_purchases"));
+        invSnap.forEach(invDoc => {
+          if (invDoc.id === receipt.linkedInvoiceId) {
+            batch.update(doc(firebaseDb, "erp_purchases", invDoc.id), { paymentStatus: 'Unpaid' });
+          }
+        });
+      }
+
+      await batch.commit();
+
+      if (setDb) setDb(prev => prev.map(r => r.id === updatedReceipt.id ? updatedReceipt : r));
+      alert("✅ Successfully unlinked! The payment is now unassigned and the invoice has been reset to Unpaid.");
+    } catch (err) {
+      alert("Database Error: Could not unlink the payment.");
+    }
+  };
+
+  const openLinkModal = async (receipt) => {
+    setLinkModal({ isLoading: true, receipt });
+    try {
+        const querySnapshot = await getDocs(collection(firebaseDb, "erp_purchases"));
+        const purchases = [];
+        querySnapshot.forEach(doc => purchases.push({ id: doc.id, ...doc.data() }));
+
+        const unpaid = purchases.filter(p => p.paymentStatus !== 'Paid');
+        unpaid.sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date)));
+
+        setLinkModal({
+            receipt,
+            unpaidInvoices: unpaid,
+            searchStr: '',
+            showAll: false,
+            isLoading: false,
+            tab: 'match',
+            newInvoice: { refNo: `INV-${receipt.id.slice(-4)}`, expenseAccount: '', vatAmount: '' }
+        });
+    } catch(e) {
+        alert("Failed to load invoices. Please check your connection.");
+        setLinkModal(null);
+    }
+  };
+
+  const handleLinkToInvoice = async (invoice) => {
+      if (!window.confirm(`Are you sure you want to link this £${fmtMoney(linkModal.receipt.amount)} payment to Invoice ${invoice.refNo} from ${invoice.supplier}?`)) return;
+
+      try {
+          const batch = writeBatch(firebaseDb);
+          const updatedReceipt = {
+              ...linkModal.receipt,
+              linkedInvoiceId: invoice.id,
+              account: invoice.supplier || 'Unassigned Supplier',
+              category: 'Accounts Payable (Supplier)',
+              payee: invoice.supplier || linkModal.receipt.payee,
+              description: `Linked to Inv/Ref: ${invoice.refNo} | ${linkModal.receipt.description}`
+          };
+          batch.set(doc(firebaseDb, "erp_receipts", updatedReceipt.id), updatedReceipt);
+
+          const updatedInvoice = { ...invoice, paymentStatus: 'Paid' };
+          batch.set(doc(firebaseDb, "erp_purchases", updatedInvoice.id), updatedInvoice);
+
+          await batch.commit();
+
+          if (setDb) setDb(prev => prev.map(r => r.id === updatedReceipt.id ? updatedReceipt : r));
+          
+          alert("✅ Successfully linked! The payment is now matched to the invoice and will correctly appear in your Supplier Balances.");
+          setLinkModal(null);
+      } catch(e) {
+          alert("Database Error: Could not link the payment.");
+      }
+  };
+
+  const handleCreateAndLinkInvoice = async (e) => {
+      e.preventDefault();
+      const { receipt, newInvoice } = linkModal;
+      if (!newInvoice.expenseAccount) return alert("Please select an expense account.");
+      if (!newInvoice.refNo) return alert("Please provide an Invoice Reference number.");
+
+      const gross = Number(receipt.amount) || 0;
+      const vat = Number(newInvoice.vatAmount) || 0;
+      const net = gross - vat;
+      
+      if (vat > gross) return alert("VAT cannot be greater than the total gross amount.");
+
+      if (!window.confirm(`Create invoice for £${fmtMoney(gross)} (VAT: £${fmtMoney(vat)}) and link to this payment?`)) return;
+
+      try {
+          const batch = writeBatch(firebaseDb);
+          
+          const invoiceId = Date.now().toString() + Math.random().toString(36).substring(7);
+          const invoiceRecord = {
+              id: invoiceId,
+              date: receipt.date,
+              supplier: receipt.account || receipt.payee || 'Unassigned Supplier',
+              refNo: newInvoice.refNo,
+              status: 'Finalized',
+              paymentStatus: 'Paid',
+              description: `Auto-generated from payment ${receipt.id}`,
+              lines: [{ id: Date.now(), account: newInvoice.expenseAccount, gross: gross, vat: vat }],
+              totalGross: gross,
+              totalVat: vat,
+              totalNet: net
+          };
+          batch.set(doc(firebaseDb, "erp_purchases", invoiceId), invoiceRecord);
+
+          const updatedReceipt = {
+              ...receipt,
+              linkedInvoiceId: invoiceId,
+              category: 'Accounts Payable (Supplier)',
+              description: `Linked to Inv/Ref: ${newInvoice.refNo} | ${receipt.description || ''}`
+          };
+          batch.set(doc(firebaseDb, "erp_receipts", updatedReceipt.id), updatedReceipt);
+
+          await batch.commit();
+
+          if (setDb) setDb(prev => prev.map(r => r.id === updatedReceipt.id ? updatedReceipt : r));
+          alert("✅ Invoice successfully created and linked! The VAT and Expense will now correctly appear in your P&L and VAT reports.");
+          setLinkModal(null);
+      } catch(err) {
+          alert("Database Error: Could not create and link the invoice.");
+      }
+  };
+
   const filteredDb = useMemo(() => {
     let result = db.filter(row => !(row.type === 'Transfer' && String(row.description).includes('Auto-Collected')));
+    
+    if (auditMode) {
+      result = result.filter(row => row.type === 'Payment' && !row.linkedInvoiceId && !row.noInvoiceRequired && !(row.description || '').includes('Automated Payment'));
+    }
+
     if (filterDateFrom && filterDateTo) {
        result = result.filter(row => {
          const rDate = new Date(normalizeDate(row.date));
@@ -262,7 +471,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
     if (filterCategory !== 'All') {
       result = result.filter(row => {
          const accInDb = accountsDb.find(a => a.name === row.account);
-         return (accInDb ? accInDb.category : row.category) === filterCategory;
+         return (row.category || (accInDb ? accInDb.category : '')) === filterCategory;
       });
     }
     if (filterType !== 'All') result = result.filter(row => filterType === 'Journal' ? (row.type === 'Journal' || row.type === 'JV') : row.type === filterType);
@@ -273,11 +482,12 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
         String(row.account || '').toLowerCase().includes(term) || String(row.description || '').toLowerCase().includes(term) ||
         String(row.amount || '').includes(term) || String(formatDateToDDMMYYYY(row.date) || '').includes(term) ||
         String(row.type || '').toLowerCase().includes(term) || String(row.fromBank || '').toLowerCase().includes(term) ||
-        String(row.toBank || '').toLowerCase().includes(term)
+        String(row.toBank || '').toLowerCase().includes(term) || String(row.payee || '').toLowerCase().includes(term)
       ));
     }
-    return result;
-  }, [db, searchTerm, filterDateFrom, filterDateTo, filterCategory, filterType, accountsDb]);
+    // Enforce strict date descending sort (Newest first)
+    return result.sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date)));
+  }, [db, searchTerm, filterDateFrom, filterDateTo, filterCategory, filterType, accountsDb, auditMode]);
 
   const handleExport = (format) => {
     if (filteredDb.length === 0) return alert("No transactions available to export.");
@@ -287,13 +497,13 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
       const isJvRow = row.type === 'Journal' || row.type === 'JV';
       const isCompound = isJvRow && row.lines && row.lines.length > 0;
       const accInDb = accountsDb.find(a => a.name === row.account);
-      const displayCategory = accInDb ? accInDb.category : row.category;
+      const displayCategory = row.category || (accInDb ? accInDb.category : '');
       
       let accountDetails = '';
       if (row.type === 'Transfer') accountDetails = `${row.fromBank} -> ${row.toBank}`;
       else if (isCompound) accountDetails = `Compound Entry (${row.lines.length} accounts)`;
       else if (isJvRow) accountDetails = `${row.debitAccount} (Dr) -> ${row.creditAccount} (Cr)`;
-      else accountDetails = `${row.account} - ${displayCategory}`;
+      else accountDetails = `${row.account} ${row.payee ? `(${row.payee})` : ''} - ${displayCategory}`;
                              
       const typeMode = row.type === 'Transfer' ? 'TRANSFER' : isJvRow ? 'JV' : `${row.type.toUpperCase()} (${row.mode}${row.bankName ? ` - ${row.bankName}` : ''})`;
       
@@ -305,12 +515,12 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
     });
 
     if (format === 'excel') {
-      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="6" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen - </td></tr><tr><td colspan="6" style="font-size: 14px; font-weight: bold; border: none;">Receipts & Payments Log</td></tr><tr><td colspan="6" style="font-size: 12px; color: #555; border: none;">Period: ${formatDateToDDMMYYYY(filterDateFrom)} to ${formatDateToDDMMYYYY(filterDateTo)} | Filter: ${filterCategory} | Type: ${filterType === 'Journal' ? 'JV' : filterType}</td></tr><tr><td colspan="6" style="border: none;"></td></tr><tr>`;
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; }</style></head><body><table><tr><td colspan="6" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="6" style="font-size: 14px; font-weight: bold; border: none;">${auditMode ? 'AUDIT: Unlinked Manual Payments' : 'Receipts & Payments Log'}</td></tr><tr><td colspan="6" style="font-size: 12px; color: #555; border: none;">Period: ${formatDateToDDMMYYYY(filterDateFrom)} to ${formatDateToDDMMYYYY(filterDateTo)} | Filter: ${filterCategory} | Type: ${filterType === 'Journal' ? 'JV' : filterType}</td></tr><tr><td colspan="6" style="border: none;"></td></tr><tr>`;
       headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; ${i >= 4 ? 'text-align: right;' : 'text-align: left;'}">${h}</th>`; }); html += `</tr>`;
       dataRows.forEach(row => { html += `<tr>`; row.forEach((val, idx) => { html += `<td style="border: 1px solid #cbd5e1; padding: 8px; ${idx >= 4 ? 'text-align: right;' : 'text-align: left;'}">${val}</td>`; }); html += `</tr>`; }); html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Receipts_Payments_${formatDateToDDMMYYYY(filterDateFrom).replace(/\//g,'-')}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
-      const doc = new jsPDF('l', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen - ", 40, 40); doc.setFontSize(14); doc.text("Receipts & Payments Log", 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${formatDateToDDMMYYYY(filterDateFrom)} to ${formatDateToDDMMYYYY(filterDateTo)} | Filter: ${filterCategory} | Type: ${filterType === 'Journal' ? 'JV' : filterType}`, 40, 75);
+      const doc = new jsPDF('l', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen", 40, 40); doc.setFontSize(14); doc.text(auditMode ? "AUDIT: Unlinked Manual Payments" : "Receipts & Payments Log", 40, 60); doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${formatDateToDDMMYYYY(filterDateFrom)} to ${formatDateToDDMMYYYY(filterDateTo)} | Filter: ${filterCategory} | Type: ${filterType === 'Journal' ? 'JV' : filterType}`, 40, 75);
       autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } }});
       doc.save(`Receipts_Payments_${formatDateToDDMMYYYY(filterDateFrom).replace(/\//g,'-')}.pdf`);
     }
@@ -332,9 +542,14 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
             <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'normal', color: '#1f2937' }}>Receipts & Payments Financial Log</h1>
             <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>Record manual cash, bank transactions, inter-bank transfers, and journal vouchers.</p>
           </div>
+          <button 
+             onClick={() => setAuditMode(!auditMode)} 
+             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: auditMode ? '#dc2626' : '#fff', color: auditMode ? '#fff' : '#dc2626', border: `2px solid #dc2626`, borderRadius: '6px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', transition: 'all 0.2s' }}>
+             <AlertTriangle size={16} />
+             {auditMode ? 'Exit Audit Mode' : 'Audit: Missing Invoices'}
+          </button>
         </div>
 
-        {/* MODALS */}
         {showCatModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ background: '#fff', width: '400px', borderRadius: '0', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
@@ -354,8 +569,106 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
               <form onSubmit={handleSaveAccount} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: sheetTheme.font }}>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Account / Ledger Name</label><input type="text" value={newAccData.name} onChange={e => setNewAccData({...newAccData, name: e.target.value})} placeholder="e.g. British Gas" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required autoFocus /></div>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Account Category</label><select value={newAccData.category} onChange={(e) => { if (e.target.value === 'ADD_NEW_CAT') setShowCatModal(true); else setNewAccData({ ...newAccData, category: e.target.value }); }} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required><option value="">-- Select Category --</option>{allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}<option value="ADD_NEW_CAT" style={{ fontWeight: '700', color: '#0369a1' }}>➕ Add New Category...</option></select></div>
-                <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', fontSize: '13px' }}>Save Account</button>
+                <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', fontSize: '13px' }}>Save & Sync to Cloud</button>
               </form>
+            </div>
+          </div>
+        )}
+        
+        {linkModal && !linkModal.isLoading && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.8)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <div style={{ background: '#fff', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', fontFamily: sheetTheme.font, display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+              <div style={{ padding: '16px 20px', background: '#059669', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><LinkIcon size={18} /><h2 style={{ margin: 0, fontSize: '16px', fontWeight: '700' }}>Link Payment to Invoice</h2></div>
+                <button onClick={() => setLinkModal(null)} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#fff' }}>✖</button>
+              </div>
+              
+              <div style={{ display: 'flex', background: '#f8fafc', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                  <button onClick={() => setLinkModal({...linkModal, tab: 'match'})} style={{ flex: 1, padding: '12px', fontWeight: '700', fontSize: '13px', background: linkModal.tab === 'match' ? '#fff' : 'transparent', color: linkModal.tab === 'match' ? '#059669' : '#64748b', border: 'none', borderBottom: linkModal.tab === 'match' ? `2px solid #059669` : 'none', cursor: 'pointer' }}><Search size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }}/> Match Pending Invoice</button>
+                  <button onClick={() => setLinkModal({...linkModal, tab: 'create'})} style={{ flex: 1, padding: '12px', fontWeight: '700', fontSize: '13px', background: linkModal.tab === 'create' ? '#fff' : 'transparent', color: linkModal.tab === 'create' ? '#059669' : '#64748b', border: 'none', borderBottom: linkModal.tab === 'create' ? `2px solid #059669` : 'none', cursor: 'pointer' }}><Plus size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }}/> Create New Invoice</button>
+              </div>
+              
+              <div style={{ padding: '20px', overflowY: 'auto' }}>
+                  <div style={{ background: '#f1f5f9', padding: '12px', borderRadius: '6px', border: `1px solid ${sheetTheme.border}`, marginBottom: '16px' }}>
+                      <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Unlinked Payment Details:</div>
+                      <div style={{ fontSize: '14px', fontWeight: '700', color: '#0f172a' }}>Payment of <strong style={{ color: '#dc2626' }}>£{fmtMoney(linkModal.receipt.amount)}</strong> on {formatDateToDDMMYYYY(linkModal.receipt.date)}</div>
+                      <div style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>Current Account: {linkModal.receipt.account} {linkModal.receipt.payee ? `(${linkModal.receipt.payee})` : ''}</div>
+                  </div>
+
+                  {linkModal.tab === 'match' && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <input type="text" placeholder="Search pending invoices..." value={linkModal.searchStr} onChange={e => setLinkModal({...linkModal, searchStr: e.target.value})} style={{ width: '50%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', fontSize: '13px' }} />
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600', color: '#475569' }}>
+                              <input type="checkbox" checked={linkModal.showAll} onChange={(e) => setLinkModal({...linkModal, showAll: e.target.checked})} /> Show all pending invoices
+                          </label>
+                      </div>
+                      <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', maxHeight: '300px', overflowY: 'auto' }}>
+                          {linkModal.unpaidInvoices.filter(inv => {
+                              const matchSearch = (String(inv.totalGross).includes(linkModal.searchStr) || String(inv.date).includes(linkModal.searchStr) || String(inv.supplier).toLowerCase().includes(linkModal.searchStr.toLowerCase()) || String(inv.refNo).toLowerCase().includes(linkModal.searchStr.toLowerCase()));
+                              const possibleMatch = linkModal.showAll || (inv.supplier === linkModal.receipt.account || inv.supplier === linkModal.receipt.payee || Number(inv.totalGross) === Number(linkModal.receipt.amount));
+                              return matchSearch && possibleMatch;
+                          }).length === 0 ? (
+                              <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                                  {linkModal.showAll ? "No unpaid invoices found in the system." : "No matching unpaid invoices found for this amount or supplier. Check 'Show all pending invoices'."}
+                              </div>
+                          ) : (
+                              linkModal.unpaidInvoices.filter(inv => {
+                                  const matchSearch = (String(inv.totalGross).includes(linkModal.searchStr) || String(inv.date).includes(linkModal.searchStr) || String(inv.supplier).toLowerCase().includes(linkModal.searchStr.toLowerCase()) || String(inv.refNo).toLowerCase().includes(linkModal.searchStr.toLowerCase()));
+                                  const possibleMatch = linkModal.showAll || (inv.supplier === linkModal.receipt.account || inv.supplier === linkModal.receipt.payee || Number(inv.totalGross) === Number(linkModal.receipt.amount));
+                                  return matchSearch && possibleMatch;
+                              }).map(inv => (
+                                  <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                                      <div>
+                                          <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a' }}>£{fmtMoney(inv.totalGross)} <span style={{ color: '#64748b', fontWeight: '400', fontSize: '12px' }}>on {formatDateToDDMMYYYY(inv.date)}</span></div>
+                                          <div style={{ fontSize: '11px', color: '#475569', marginTop: '2px' }}>{inv.supplier} | Ref: {inv.refNo}</div>
+                                      </div>
+                                      <button type="button" onClick={() => handleLinkToInvoice(inv)} style={{ padding: '6px 12px', background: '#e2e8f0', color: '#0f172a', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Link</button>
+                                  </div>
+                              ))
+                          )}
+                      </div>
+                    </>
+                  )}
+
+                  {linkModal.tab === 'create' && (
+                      <form onSubmit={handleCreateAndLinkInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          <div>
+                              <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Supplier / Vendor</label>
+                              <input type="text" value={linkModal.receipt.account || linkModal.receipt.payee} disabled style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b', fontWeight: '600' }} />
+                          </div>
+                          <div>
+                              <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Expense Account</label>
+                              <select value={linkModal.newInvoice.expenseAccount} onChange={e => setLinkModal({...linkModal, newInvoice: {...linkModal.newInvoice, expenseAccount: e.target.value}})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', background: '#fff' }} required>
+                                  <option value="">-- Choose Expense Account --</option>
+                                  {allCategories.filter(c => c.toLowerCase().includes('expense') || c.toLowerCase().includes('cogs') || c.toLowerCase().includes('cost')).map(cat => {
+                                      const accsInCat = allAccountsSorted.filter(a => a.category === cat);
+                                      if (accsInCat.length === 0) return null;
+                                      return (<optgroup key={cat} label={`📂 ${cat}`}>{accsInCat.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</optgroup>);
+                                  })}
+                              </select>
+                          </div>
+                          <div style={{ display: 'flex', gap: '16px' }}>
+                              <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Invoice Ref #</label>
+                                  <input type="text" value={linkModal.newInvoice.refNo} onChange={e => setLinkModal({...linkModal, newInvoice: {...linkModal.newInvoice, refNo: e.target.value}})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box' }} required />
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>VAT Amount (£)</label>
+                                  <input type="number" step="any" value={linkModal.newInvoice.vatAmount} onChange={e => setLinkModal({...linkModal, newInvoice: {...linkModal.newInvoice, vatAmount: e.target.value}})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', fontWeight: '700', color: '#dc2626' }} placeholder="0.00" />
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '6px', display: 'block', color: '#334155' }}>Total Gross (£)</label>
+                                  <input type="text" value={fmtMoney(linkModal.receipt.amount)} disabled style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#059669', fontWeight: '800' }} />
+                              </div>
+                          </div>
+                          <div style={{ marginTop: '8px', display: 'flex', gap: '12px' }}>
+                              <button type="button" onClick={() => setLinkModal(null)} style={{ flex: 1, padding: '12px', background: '#f1f5f9', color: '#475569', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                              <button type="submit" style={{ flex: 2, padding: '12px', background: '#059669', color: '#fff', fontWeight: '700', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Generate & Link Invoice</button>
+                          </div>
+                      </form>
+                  )}
+              </div>
             </div>
           </div>
         )}
@@ -378,7 +691,32 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                   <tr><td style={labelTd}>Mode of Transaction</td><td style={{...inputTd, padding: '8px 12px', background: '#fff'}}><div style={{ display: 'flex', gap: '16px' }}><label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}><input type="radio" name="mode" value="Cash" checked={formData.mode === 'Cash'} onChange={handleChange} /> Cash</label><label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}><input type="radio" name="mode" value="Bank" checked={formData.mode === 'Bank'} onChange={handleChange} /> Bank</label></div></td></tr>
                   {formData.mode === 'Bank' && (<tr><td style={labelTd}>Bank Account</td><td style={inputTd}><CellSelect name="bankName" value={formData.bankName} onChange={handleChange} onKeyDown={handleKeyDown} required><option value="">-- Choose Bank --</option>{bankAccounts.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}</CellSelect></td></tr>)}
                   <tr><td style={labelTd}>1. Specific Ledger Account</td><td style={inputTd}><CellSelect name="account" value={formData.account} onChange={handleAccountSelect} onKeyDown={handleKeyDown} required><option value="">-- Choose Account --</option>{allCategories.map(cat => { const accsInCat = allAccountsSorted.filter(a => a.category === cat); if (accsInCat.length === 0) return null; return (<optgroup key={cat} label={`📂 ${cat}`}>{accsInCat.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</optgroup>); })}<option value="ADD_NEW_ACC" style={{ fontWeight: '700', color: '#0369a1' }}>➕ Add New Account...</option></CellSelect></td></tr>
-                  <tr><td style={labelTd}>2. Account Category</td><td style={inputTd}><CellInput type="text" name="category" value={formData.category} readOnly disabled bg="#f3f4f6" placeholder="Auto-filled based on selected account" /></td></tr>
+                  <tr>
+                    <td style={labelTd}>2. Account Category</td>
+                    <td style={inputTd}>
+                      <CellSelect name="category" value={formData.category} onChange={handleChange} onKeyDown={handleKeyDown} required>
+                        <option value="">-- Choose Category --</option>
+                        {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      </CellSelect>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={labelTd}>Payee / Supplier (Optional)</td>
+                    <td style={inputTd}>
+                      <input 
+                        list="payee-list"
+                        name="payee" 
+                        value={formData.payee || ''} 
+                        onChange={handleChange} 
+                        onKeyDown={handleKeyDown} 
+                        placeholder="Type name if you want this to show in P&L sub-groups..."
+                        style={{ width: '100%', border: 'none', padding: '8px 12px', boxSizing: 'border-box', fontFamily: sheetTheme.font, fontSize: '13px', outline: 'none', background: 'transparent' }} 
+                      />
+                      <datalist id="payee-list">
+                        {allAccountsSorted.map(s => <option key={s.id} value={s.name}>{s.name} ({s.category})</option>)}
+                      </datalist>
+                    </td>
+                  </tr>
                 </>
               )}
 
@@ -389,17 +727,27 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                 </>
               )}
 
-              {/* ONLY RENDER AMOUNT & DESC IF NOT A JOURNAL */}
               {!isJournal && (
                 <>
                   <tr><td style={labelTd}>{isTransfer ? 'Transfer Amount (£)' : 'Gross Amount (£)'}</td><td style={{...inputTd, background: activeHeaderBg}}><CellInput type="number" step="any" name="amount" value={formData.amount} onChange={handleChange} onKeyDown={handleKeyDown} placeholder="0.00" align="left" required /></td></tr>
                   <tr><td style={labelTd}>Particulars / Description</td><td style={inputTd}><CellInput type="text" name="description" value={formData.description} onChange={handleChange} onKeyDown={handleKeyDown} placeholder="e.g. Reference number or detail" required /></td></tr>
+                  
+                  {isPayment && (
+                    <tr>
+                      <td style={labelTd}>Audit Exemption</td>
+                      <td style={{...inputTd, padding: '8px 12px', background: '#f0fdf4'}}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: '700', color: '#166534' }}>
+                          <input type="checkbox" name="noInvoiceRequired" checked={formData.noInvoiceRequired || false} onChange={handleChange} style={{ cursor: 'pointer' }} />
+                          ☑️ No Formal Invoice Required (e.g. Bank Charge / Direct Debit)
+                        </label>
+                      </td>
+                    </tr>
+                  )}
                 </>
               )}
             </tbody>
           </table>
 
-          {/* MULTI-LINE COMPOUND JV GRID */}
           {isJournal && (
             <div style={{ border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>
               <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}` }}>
@@ -460,14 +808,17 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
           </div>
         </form>
 
-        {/* LOG TABLE */}
         <div>
           <div style={{ background: sheetTheme.headerBlueBg, padding: '12px', border: `1px solid ${sheetTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
-            <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: sheetTheme.headerBlueText }}>Master Transaction Log</h2>
+            <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: sheetTheme.headerBlueText }}>{auditMode ? 'AUDIT: Unlinked Manual Payments' : 'Master Transaction Log'}</h2>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', padding: '4px 8px', border: `1px solid ${sheetTheme.border}` }}><span style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280' }}>FROM:</span><input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font }} /><span style={{ color: sheetTheme.border }}>|</span><span style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280' }}>TO:</span><input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font }} /></div>
-              <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font, background: '#fff' }}><option value="All">All Types</option><option value="Receipt">Receipts</option><option value="Payment">Payments</option><option value="Transfer">Transfers</option><option value="Journal">JV</option></select>
-              <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font, background: '#fff', maxWidth: '150px' }}><option value="All">All Categories</option>{allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select>
+              {!auditMode && (
+                <>
+                  <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font, background: '#fff' }}><option value="All">All Types</option><option value="Receipt">Receipts</option><option value="Payment">Payments</option><option value="Transfer">Transfers</option><option value="Journal">JV</option></select>
+                  <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font, background: '#fff', maxWidth: '150px' }}><option value="All">All Categories</option>{allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select>
+                </>
+              )}
               <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', outline: 'none', fontSize: '12px', fontFamily: sheetTheme.font, width: '120px' }} />
               <button onClick={() => handleExport('excel')} style={{ padding: '4px 10px', background: '#10b981', color: '#fff', border: 'none', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Excel</button><button onClick={() => handleExport('pdf')} style={{ padding: '4px 10px', background: '#ef4444', color: '#fff', border: 'none', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>PDF</button>
             </div>
@@ -484,17 +835,30 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                     const isJvRow = row.type === 'Journal' || row.type === 'JV'; 
                     const isCompound = isJvRow && row.lines && row.lines.length > 0;
                     const accInDb = accountsDb.find(a => a.name === row.account);
-                    const displayCategory = accInDb ? accInDb.category : row.category;
+                    const displayCategory = row.category || (accInDb ? accInDb.category : '');
+                    
+                    const isMissingInvoice = row.type === 'Payment' && !row.linkedInvoiceId && !row.noInvoiceRequired && !(row.description || '').includes('Automated Payment');
+                    const isLinked = row.linkedInvoiceId;
+
                     return (
-                      <tr key={row.id}>
+                      <tr key={row.id} style={{ background: auditMode ? '#fef2f2' : '#fff' }}>
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '600' }}>{formatDateToDDMMYYYY(row.date)}</td>
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px' }}>
-                          <div style={{ fontWeight: '700', color: row.type === 'Receipt' ? '#059669' : row.type === 'Payment' ? '#dc2626' : isJvRow ? '#7e22ce' : '#2563eb' }}>{isJvRow ? 'JV' : row.type.toUpperCase()}</div>
-                          {(row.type !== 'Transfer' && !isJvRow) && <div style={{ color: '#6b7280' }}>{row.mode} {row.bankName ? `(${row.bankName})` : ''}</div>}
+                          <div style={{ fontWeight: '700', color: row.type === 'Receipt' ? '#059669' : row.type === 'Payment' ? '#dc2626' : isJvRow ? '#7e22ce' : '#2563eb' }}>
+                              {isJvRow ? 'JV' : row.type.toUpperCase()}
+                              {isMissingInvoice && <span title="Missing linked purchase invoice" style={{marginLeft: '6px', fontSize: '14px'}}>⚠️</span>}
+                              {isLinked && <span title="Linked to Purchase Invoice" style={{marginLeft: '6px', fontSize: '11px', background: '#dcfce7', color: '#166534', padding: '2px 6px', borderRadius: '4px', fontWeight: '800'}}>🔗 Linked</span>}
+                          </div>
+                          {(row.type !== 'Transfer' && !isJvRow) && (
+                              <div style={{ color: '#6b7280' }}>
+                                  {row.mode} {row.bankName ? `(${row.bankName})` : ''} 
+                                  {row.noInvoiceRequired && <span style={{ color: '#0369a1', fontSize: '10px', marginLeft: '4px', fontWeight: '800' }}>(Exempt)</span>}
+                              </div>
+                          )}
                         </td>
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, fontSize: '12px' }}>
                           <div style={{ fontWeight: '700', color: '#1f2937' }}>
-                            {row.type === 'Transfer' ? `${row.fromBank} ➔ ${row.toBank}` : isCompound ? `Compound Entry (${row.lines.length} lines)` : isJvRow ? `${row.debitAccount} (Dr) ➔ ${row.creditAccount} (Cr)` : row.account}
+                            {row.type === 'Transfer' ? `${row.fromBank} ➔ ${row.toBank}` : isCompound ? `Compound Entry (${row.lines.length} lines)` : isJvRow ? `${row.debitAccount} (Dr) ➔ ${row.creditAccount} (Cr)` : `${row.account} ${row.payee ? `(${row.payee})` : ''}`}
                           </div>
                           {(row.type !== 'Transfer' && !isJvRow) && <div style={{ fontSize: '11px', color: '#6b7280' }}>{displayCategory}</div>}
                         </td>
@@ -502,7 +866,17 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#059669' }}>{row.type === 'Receipt' || row.type === 'Transfer' || isJvRow ? `${fmtMoney(row.amount)}` : '-'}</td>
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{row.type === 'Payment' || row.type === 'Transfer' || isJvRow ? `${fmtMoney(row.amount)}` : '-'}</td>
                         <td style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, textAlign: 'center' }}>
-                          <button onClick={() => handleEdit(row)} style={{ background: 'transparent', color: '#0369a1', border: 'none', cursor: 'pointer', marginRight: '8px' }} title="Edit"><Edit2 size={14} /></button>
+                          {isMissingInvoice && (
+                              <button onClick={() => openLinkModal(row)} style={{ background: 'transparent', color: '#10b981', border: 'none', cursor: 'pointer', marginRight: '6px' }} title="Link to Pending Invoice">
+                                <LinkIcon size={14} />
+                              </button>
+                          )}
+                          {isLinked && (
+                              <button onClick={() => handleUnlink(row)} style={{ background: 'transparent', color: '#d97706', border: 'none', cursor: 'pointer', marginRight: '6px' }} title="Unlink from Invoice (Admin/Owner Only)">
+                                <Unlink size={14} />
+                              </button>
+                          )}
+                          <button onClick={() => handleEdit(row)} style={{ background: 'transparent', color: '#0369a1', border: 'none', cursor: 'pointer', marginRight: '6px' }} title="Edit"><Edit2 size={14} /></button>
                           <button onClick={() => handleDelete(row.id)} style={{ background: 'transparent', color: '#dc2626', border: 'none', cursor: 'pointer' }} title="Delete"><Trash2 size={14} /></button>
                         </td>
                       </tr>

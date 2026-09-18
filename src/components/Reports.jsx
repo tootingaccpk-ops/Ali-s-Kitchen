@@ -334,7 +334,7 @@ export default function Reports({ salesDb = [], purchasesDb = [], receiptsDb = [
       const paid = paidReceipts + paidJv;
 
       return { Supplier: sup.name, Opening: `${fmtMoney(openingBal)}`, Billed: `${fmtMoney(billed)}`, Paid: `${fmtMoney(paid)}`, Balance: `${fmtMoney(openingBal + billed - paid)}`, _bal: openingBal + billed - paid, _billed: billed, _paid: paid, _open: openingBal };
-    }).filter(s => s._bal !== 0 || s._billed !== 0 || s._paid !== 0 || s._open !== 0); 
+    }).filter(s => Math.abs(s._bal) > 0.009); // Hide completely settled zero-balance accounts
   }, [sortedAccountsDb, purchasesDb, receiptsDb, dateTo]);
 
   const vatData = useMemo(() => {
