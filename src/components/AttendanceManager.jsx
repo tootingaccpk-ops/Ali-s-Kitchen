@@ -37,7 +37,7 @@ export default function AttendanceManager({ isKioskMode = false }) {
   const [activeTab, setActiveTab] = useState(effectiveKioskMode ? 'kiosk' : 'admin');
   const [employees, setEmployees] = useState([]);
   
-  const topRef = useRef(null); // Reference for auto-scrolling
+  const topRef = useRef(null);
 
   // --- KIOSK STATE ---
   const [selectedEmp, setSelectedEmp] = useState('');
@@ -153,7 +153,6 @@ export default function AttendanceManager({ isKioskMode = false }) {
 
   // --- KIOSK ACTIONS ---
   const handlePunch = async (punchType) => {
-    // Helper function to show messages, auto-scroll, and auto-clear after 5 seconds
     const showMessage = (text, type) => {
       setKioskMessage({ text, type });
       setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
@@ -255,19 +254,30 @@ export default function AttendanceManager({ isKioskMode = false }) {
     }
   };
 
-  // --- EXPORT FUNCTIONS ---
+  // --- UPGRADED EXPORT FUNCTIONS (Matching Financial Modules) ---
   const exportPayroll = (format) => {
     if (payrollData.length === 0) return alert("No payroll data to export.");
     const headers = ['Employee Name', 'Designation', 'Total Shifts', 'Total Hours Worked', 'Missing Check-Outs'];
     const dataRows = payrollData.map(row => [row.name, row.designation, row.shifts, formatDuration(row.totalMs), row.missingOuts]);
 
     if (format === 'excel') {
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Payroll");
-      XLSX.writeFile(wb, `Ali_Kitchen_Payroll_${startDate}_to_${endDate}.xlsx`);
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="5" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="5" style="font-size: 14px; font-weight: bold; border: none;">Payroll Summary (${startDate} to ${endDate})</td></tr><tr><td colspan="5" style="border: none;"></td></tr><tr>`;
+      headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; }); html += `</tr>`;
+      dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; });
+      html += `</table></body></html>`;
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Ali_Kitchen_Payroll_${startDate}_to_${endDate}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } else {
-      const doc = new jsPDF(); doc.setFontSize(16); doc.text(`Payroll Summary (${startDate} to ${endDate})`, 14, 20);
-      autoTable(doc, { startY: 30, head: [headers], body: dataRows, theme: 'grid' });
+      const doc = new jsPDF('p', 'pt', 'a4');
+      doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen", 40, 40);
+      doc.setFontSize(14); doc.text(`Payroll Summary (${startDate} to ${endDate})`, 40, 60);
+      autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }});
       doc.save(`Ali_Kitchen_Payroll_${startDate}_to_${endDate}.pdf`);
     }
   };
@@ -284,19 +294,29 @@ export default function AttendanceManager({ isKioskMode = false }) {
     const fileName = `${selectedAuditEmp.name.replace(/\s+/g, '_')}_Timesheet_${startDate}_to_${endDate}`;
 
     if (format === 'excel') {
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Details");
-      XLSX.writeFile(wb, `${fileName}.xlsx`);
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="4" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="4" style="font-size: 14px; font-weight: bold; border: none;">Timesheet Audit: ${selectedAuditEmp.name}</td></tr><tr><td colspan="4" style="font-size: 12px; color: #555; border: none;">Period: ${startDate} to ${endDate}</td></tr><tr><td colspan="4" style="border: none;"></td></tr><tr>`;
+      headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; }); html += `</tr>`;
+      dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; });
+      html += `</table></body></html>`;
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileName}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } else {
-      const doc = new jsPDF(); doc.setFontSize(16); doc.text(`Timesheet Audit: ${selectedAuditEmp.name}`, 14, 20);
-      doc.setFontSize(12); doc.text(`Period: ${startDate} to ${endDate}`, 14, 28);
-      autoTable(doc, { startY: 35, head: [headers], body: dataRows, theme: 'grid' });
+      const doc = new jsPDF('p', 'pt', 'a4');
+      doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen", 40, 40);
+      doc.setFontSize(14); doc.text(`Timesheet Audit: ${selectedAuditEmp.name}`, 40, 60);
+      doc.setFontSize(11); doc.setFont("helvetica", "normal"); doc.text(`Period: ${startDate} to ${endDate}`, 40, 75);
+      autoTable(doc, { startY: 90, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }});
       doc.save(`${fileName}.pdf`);
     }
   };
 
   // --- VIEWS ---
-
   const renderKioskView = () => (
     <div style={{ maxWidth: '400px', margin: '0 auto', background: theme.cardBg, borderRadius: '12px', padding: '32px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', textAlign: 'center' }}>
       <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: '900', color: theme.primary }}>Ali's Kitchen</h2>
