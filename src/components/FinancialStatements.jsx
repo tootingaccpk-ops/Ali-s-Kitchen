@@ -173,7 +173,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
        return toDateObj(settleDate) >= toDateObj(dateFrom) && toDateObj(settleDate) <= toDateObj(dateTo);
     });
     
-    // Purged Memon and Khanani. Streamlined to Cash, LK Associates, Total
     const initCols = () => ({ cash: 0, lk: 0, total: 0 });
     const colKeys = ['cash', 'lk', 'total'];
     
@@ -209,7 +208,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       map[category].items[itemName].total += nAmt;
     };
 
-    // Safely catches any rogue historical M1/M2 data and forces it into the LK column
     const getBankCol = (name) => {
       if (!name) return null; const n = String(name).toLowerCase();
       if (n.includes('lk') || n.includes('memon') || n.includes('khanani')) return 'lk';
@@ -231,7 +229,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       if (!s) return;
       const cashG = Number(s.cashGross) || 0; 
       
-      // Pulls LK Associates gross, while safely lumping in any legacy M1/M2 data to prevent history loss
       const lkG = (Number(s.m3Gross) || 0) + (Number(s.m1Gross) || 0) + (Number(s.m2Gross) || 0); 
       
       const uber = Number(s.uber) || 0;
@@ -481,7 +478,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
 
   const getActiveExportRows = (isCombined) => {
     let rows = [];
-    const tg = pnlData.totalIncomeCols.total || 1; 
+    const tg = pnlData.totalIncomeCols.total; 
 
     const addSection = (title, dataObj, subtotalLabel) => {
       if (dataObj && dataObj.arr && dataObj.arr.length > 0) {
@@ -693,7 +690,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
         if (!s || toDateObj(s.date) > targetDateObj) return;
         const cashNet = (Number(s.cashGross)||0) - (Number(s.cashRefund)||0);
         
-        // Consolidates legacy M1/M2 data safely into LK Associates for the ledger
         const lkNet = ((Number(s.m3Gross)||0) - (Number(s.m3Refund)||0)) + 
                       ((Number(s.m1Gross)||0) - (Number(s.m1Refund)||0)) + 
                       ((Number(s.m2Gross)||0) - (Number(s.m2Refund)||0));
@@ -916,7 +912,9 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
   };
 
   const theme = { bg: '#ffffff', cardBg: '#ffffff', textMain: '#000000', textMuted: '#000000', primary: '#0ea5e9', border: '#cbd5e1' };
-  const uiRatioBase = pnlData.totalIncomeCols.total || 1;
+  
+  // FIX: Removed the "|| 1" fallback so zero income correctly passes a zero to calcRatio
+  const uiRatioBase = pnlData.totalIncomeCols.total;
 
   const renderPnlSection = (title, dataObj, isCombined, customColor = '', subtotalLabel = '') => {
     if (!dataObj || !dataObj.arr || dataObj.arr.length === 0) return null;
