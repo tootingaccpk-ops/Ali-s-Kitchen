@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, getDocs, deleteDoc, doc, query, where } from 'firebase/firestore'; 
 import { db } from './firebase'; 
-import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale, Clock } from 'lucide-react';
+import { Home, Calculator, Wallet, ShoppingCart, FileText, Users, Store, Settings, LogOut, Landmark, Truck, ChevronDown, ChevronUp, Scale, Clock, Package } from 'lucide-react';
 import PurchasesExpenses from './components/PurchasesExpenses.jsx';
 import LoginScreen from './components/LoginScreen.jsx';
 import DailySales from './components/Dailysalesform.jsx';
@@ -13,6 +13,7 @@ import FinancialStatements from './components/FinancialStatements.jsx';
 import Dashboard from './components/dashboard.jsx';
 import SystemSetup from './components/SystemSettings.jsx'; 
 import AttendanceManager from './components/AttendanceManager.jsx';
+import InventoryManagement from './components/InventoryManagement';
 
 const tabIcons = {
   'Dashboard': Home,
@@ -21,6 +22,7 @@ const tabIcons = {
   'Purchases & Expenses': ShoppingCart,
   'Cash & Bank Books': Landmark, 
   'Delivery Settlements': Truck, 
+  'Inventory & Stock': Package,
   'Reports': FileText,
   'Financial Statements': Scale,
   'Timesheets': Clock
@@ -53,7 +55,7 @@ function App() {
     }
   }, []);
 
-  const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'Financial Statements', 'Timesheets'];
+  const allTabsList = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Inventory & Stock', 'Reports', 'Financial Statements', 'Timesheets'];
   
   const hasAccess = (tabName) => {
     if (!currentUser) return false;
@@ -74,7 +76,7 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // AUTOMATIC CLOUD DEDUPLICATION & REAL-TIME SYNC[cite: 5]
+  // AUTOMATIC CLOUD DEDUPLICATION & REAL-TIME SYNC
   useEffect(() => {
     try {
       setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
@@ -167,7 +169,7 @@ function App() {
     }} />;
   }
 
-  // KIOSK LOCK-DOWN CHECK: Target the 'attendance' username strictly[cite: 5]
+  // KIOSK LOCK-DOWN CHECK: Target the 'attendance' username strictly
   const isKioskUser = currentUser?.username?.toLowerCase() === 'attendance' || currentUser?.email === 'attendance@aliskitchen.com';
   if (isKioskUser) {
     return <AttendanceManager isKioskMode={true} />;
@@ -403,6 +405,12 @@ function App() {
                   receiptsDb={receiptsDb}
                   setReceiptsDb={setReceiptsDb}
                 />
+              </div>
+            )}
+
+            {activeTab === 'Inventory & Stock' && hasAccess('Inventory & Stock') && (
+              <div style={{ padding: '0px', boxSizing: 'border-box', width: '100%' }}>
+                <InventoryManagement />
               </div>
             )}
 

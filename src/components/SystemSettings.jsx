@@ -6,14 +6,11 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// NOTE: The hardcoded defaultAccounts list has been permanently removed.
-// The system will now strictly wait for and rely ONLY on your live Firebase database.
-
-const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets'];
+// Added 'Inventory & Stock' to the permissions array
+const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Inventory & Stock', 'Reports', 'System Setup', 'Timesheets'];
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
 export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
-  // Now initializes strictly with cloud accounts (or an empty list while waiting for the cloud)
   const [localAccounts, setLocalAccounts] = useState(accounts || []);
   const [importStatus, setImportStatus] = useState('');
   
@@ -30,7 +27,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
   const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
-  // Safely updates the list only when Firebase actually finishes loading your accounts
   useEffect(() => {
     if (accounts && accounts.length > 0) {
       setLocalAccounts(accounts);
@@ -184,7 +180,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
 
-  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)
   const saveSettings = async () => {
     if (isSaving) return;
     
