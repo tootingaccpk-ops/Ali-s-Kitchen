@@ -35,7 +35,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [localAccounts, setLocalAccounts] = useState(accounts.length > 0 ? accounts : defaultAccounts);
   const [importStatus, setImportStatus] = useState('');
   
-  // Custom Category State
   const [customCategoryTypes, setCustomCategoryTypes] = useState(() => { try { return JSON.parse(localStorage.getItem('erp_custom_cat_types')) || {}; } catch(e) { return {}; } });
   const [showCatModal, setShowCatModal] = useState(false);
   const [newCatData, setNewCatData] = useState({ name: '', type: 'Expense' });
@@ -45,19 +44,16 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [visiblePasswords, setVisiblePasswords] = useState({});
   const [isSaving, setIsSaving] = useState(false);
 
-  // Check Current Logged-in User Role from Session Storage
   const currentUsername = sessionStorage.getItem('erp_current_user') || '';
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
   const isAuthorizedAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
-  // Keep localAccounts synced if cloud accounts prop updates
   useEffect(() => {
     if (accounts.length > 0) {
       setLocalAccounts(accounts);
     }
   }, [accounts]);
 
-  // Firebase Cloud Fetch & LocalStorage Migration Hook
   useEffect(() => {
     const fetchAndMigrateUsers = async () => {
       try {
@@ -209,15 +205,28 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const saveSettings = async () => {
     if (isSaving) return;
     
-    const names = localAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
+    // Purge the invisible ghosts from the raw data before saving
+    const cleanAccounts = [...localAccounts].reduce((acc, current) => {
+      const nameKey = String(current.name || '').trim().toLowerCase();
+      if (!nameKey) {
+        acc.push(current);
+      } else {
+        if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) {
+          acc.push(current);
+        }
+      }
+      return acc;
+    }, []);
+
+    const names = cleanAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
     const hasDuplicates = new Set(names).size !== names.length;
     
     if (hasDuplicates) return alert('❌ Duplicate Accounts Detected! Please ensure every account has a unique name before saving to prevent transaction errors.');
-    if (localAccounts.some(a => !String(a.name || '').trim())) return alert('❌ Blank Accounts Detected! Please fill in all account names or delete the empty rows before saving.');
+    if (cleanAccounts.some(a => !String(a.name || '').trim())) return alert('❌ Blank Accounts Detected! Please fill in all account names or delete the empty rows before saving.');
 
     setIsSaving(true);
     const newMap = {};
-    localAccounts.forEach(acc => {
+    cleanAccounts.forEach(acc => {
       if (acc.name) {
         const cat = String(acc.category || '');
         const catLow = cat.toLowerCase();
@@ -235,14 +244,13 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       }
     });
 
-    // Update local state and category maps instantly
     setCategoriesMap(newMap);
-    setAccounts(localAccounts);
+    setAccounts(cleanAccounts);
+    setLocalAccounts(cleanAccounts); // Permanently overwrites the ghosts
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
 
     try {
-      // Sync directly to Firebase Firestore `erp_accounts` collection
       const querySnapshot = await getDocs(collection(db, "erp_accounts"));
       const existingDocs = {};
       querySnapshot.forEach((docSnap) => {
@@ -250,7 +258,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
         if (data.name) existingDocs[data.name.trim().toLowerCase()] = docSnap.id;
       });
 
-      for (const acc of localAccounts) {
+      for (const acc of cleanAccounts) {
         const docData = {
           name: acc.name.trim(),
           category: acc.category || '',
@@ -264,7 +272,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
           await addDoc(collection(db, "erp_accounts"), docData);
         }
       }
-      alert('✅ Chart of Accounts Saved Successfully to Cloud & Local Storage!');
+      alert('✅ Chart of Accounts Saved Successfully to Cloud!');
     } catch (error) {
       console.error("Error syncing accounts to Firebase:", error);
       alert('⚠️ Saved locally, but cloud sync encountered an issue. Check your Firebase connection rules.');
@@ -294,7 +302,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     reader.readAsText(file);
   };
 
-  // AGGRESSIVE VISUAL DEDUPLICATION (Fixes the ghost rows rendering on lag)
   const sortedAccounts = [...localAccounts]
     .reduce((acc, current) => {
       const nameKey = String(current.name || '').trim().toLowerCase();
@@ -390,7 +397,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const cardHeader = { padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(248, 250, 252, 0.5)' };
   const inputStyle = { padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', width: '100%', boxSizing: 'border-box' };
 
-  // STRICT ACCESS DENIED SCREEN FOR NON-ADMIN / NON-OWNER USERS
   if (!isAuthorizedAdminOrOwner) {
     return (
       <div style={{ ...layout, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -418,7 +424,6 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
           <p style={{ margin: '8px 0 0 0', color: '#64748b' }}>Manage your Chart of Accounts, Users, and Data Backups</p>
         </div>
 
-        {/* MODAL: ADD CATEGORY */}
         {showCatModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ background: '#fff', width: '400px', borderRadius: '8px', border: `1px solid #e2e8f0`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
