@@ -74,7 +74,7 @@ function App() {
     }
   }, [currentUser, activeTab]);
 
-  // AUTOMATIC CLOUD DEDUPLICATION & REAL-TIME SYNC
+  // AUTOMATIC CLOUD DEDUPLICATION & REAL-TIME SYNC[cite: 5]
   useEffect(() => {
     try {
       setDeliveryDb(JSON.parse(localStorage.getItem('erp_delivery')) || []);
@@ -167,7 +167,7 @@ function App() {
     }} />;
   }
 
-  // KIOSK LOCK-DOWN CHECK: Target the 'attendance' username strictly
+  // KIOSK LOCK-DOWN CHECK: Target the 'attendance' username strictly[cite: 5]
   const isKioskUser = currentUser?.username?.toLowerCase() === 'attendance' || currentUser?.email === 'attendance@aliskitchen.com';
   if (isKioskUser) {
     return <AttendanceManager isKioskMode={true} />;
@@ -187,7 +187,7 @@ function App() {
           </div>
           <div>
             <h1 style={{ margin: 0, fontSize: '16px', fontWeight: '900', color: theme.text, letterSpacing: '-0.3px', lineHeight: '1.2' }}>Ali's Kitchen</h1>
-            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>    ERP</div>
+            <div style={{ fontSize: '10px', color: theme.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>ERP</div>
           </div>
         </div>
         

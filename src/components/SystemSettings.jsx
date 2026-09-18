@@ -28,7 +28,7 @@ const defaultAccounts = [
   { id: '19', name: 'Owner Drawings', category: 'Equity / Owner Drawings', balance: 0 }
 ];
 
-const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets'];
+const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets']; //[cite: 6]
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
 export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
@@ -42,7 +42,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const [pendingAccId, setPendingAccId] = useState(null);
 
   const [users, setUsers] = useState([]);
-  const [visiblePasswords, setVisiblePasswords] = useState({}); // Track which passwords are toggled visible
+  const [visiblePasswords, setVisiblePasswords] = useState({});
 
   // Check Current Logged-in User Role from Session Storage
   const currentUsername = sessionStorage.getItem('erp_current_user') || '';
@@ -204,7 +204,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
 
-  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)
+  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)[cite: 6]
   const saveSettings = async () => {
     const names = localAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
     const hasDuplicates = new Set(names).size !== names.length;
@@ -302,13 +302,13 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     const headers = ['Account / Supplier Name', 'Category Type', 'Opening Balance (£)'];
     const dataRows = sortedAccounts.map(acc => [acc.name || '-', acc.category || '-', `£ ${Number(acc.balance || 0).toFixed(2)}`]);
     if (format === 'excel') {
-      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="3" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen - </td></tr><tr><td colspan="3" style="font-size: 14px; font-weight: bold; border: none;">Chart of Accounts</td></tr><tr><td colspan="3" style="border: none;"></td></tr><tr>`;
+      let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }</style></head><body><table><tr><td colspan="3" style="font-size: 18px; font-weight: bold; border: none;">Ali's Kitchen</td></tr><tr><td colspan="3" style="font-size: 14px; font-weight: bold; border: none;">Chart of Accounts</td></tr><tr><td colspan="3" style="border: none;"></td></tr><tr>`;
       headers.forEach(h => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold;">${h}</th>`; }); html += `</tr>`;
       dataRows.forEach(row => { html += `<tr>${row.map(val => `<td>${val}</td>`).join('')}</tr>`; });
       html += `</table></body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Chart_Of_Accounts.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (format === 'pdf') {
-      try { const doc = new jsPDF('p', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen - ", 40, 40); doc.setFontSize(14); doc.text("Chart of Accounts", 40, 60); autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }}); doc.save(`Chart_Of_Accounts.pdf`); } catch (err) { alert("PDF Generation Failed."); }
+      try { const doc = new jsPDF('p', 'pt', 'a4'); doc.setFontSize(18); doc.setFont("helvetica", "bold"); doc.text("Ali's Kitchen", 40, 40); doc.setFontSize(14); doc.text("Chart of Accounts", 40, 60); autoTable(doc, { startY: 80, head: [headers], body: dataRows, theme: 'grid', headStyles: { fillColor: [15, 23, 42], fontSize: 10, cellPadding: 6 }, styles: { fontSize: 9, cellPadding: 6 }}); doc.save(`Chart_Of_Accounts.pdf`); } catch (err) { alert("PDF Generation Failed."); }
     }
   };
 
@@ -479,7 +479,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
         <div style={{ ...cardStyle, border: '1px solid #3b82f6' }}>
           <div style={{ cardHeader, background: '#eff6ff' }}>
             <FileUp size={20} color="#2563eb" />
-            <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#1e40af' }}>Historic Data Importer (.xls)</h2>
+            <h2 style={{ margin: '0', fontSize: '16px', fontWeight: '700', color: '#1e40af' }}>Historic Data Importer (.xls)</h2>
           </div>
           <div style={{ padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}><input type="file" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} style={{ padding: '12px', border: '2px dashed #cbd5e1', borderRadius: '8px', background: '#f8fafc', width: '100%', cursor: 'pointer' }} /></div>
