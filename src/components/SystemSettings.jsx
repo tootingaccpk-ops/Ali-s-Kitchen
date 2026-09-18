@@ -28,7 +28,7 @@ const defaultAccounts = [
   { id: '19', name: 'Owner Drawings', category: 'Equity / Owner Drawings', balance: 0 }
 ];
 
-const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets']; //[cite: 6]
+const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Reports', 'System Setup', 'Timesheets'];
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
 export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
@@ -43,6 +43,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
   const [users, setUsers] = useState([]);
   const [visiblePasswords, setVisiblePasswords] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
 
   // Check Current Logged-in User Role from Session Storage
   const currentUsername = sessionStorage.getItem('erp_current_user') || '';
@@ -204,14 +205,17 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
 
-  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)[cite: 6]
+  // FULL CLOUD SAVE FOR CHART OF ACCOUNTS (SYNCING TO FIRESTORE GLOBAL)
   const saveSettings = async () => {
+    if (isSaving) return;
+    
     const names = localAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
     const hasDuplicates = new Set(names).size !== names.length;
     
     if (hasDuplicates) return alert('❌ Duplicate Accounts Detected! Please ensure every account has a unique name before saving to prevent transaction errors.');
     if (localAccounts.some(a => !String(a.name || '').trim())) return alert('❌ Blank Accounts Detected! Please fill in all account names or delete the empty rows before saving.');
 
+    setIsSaving(true);
     const newMap = {};
     localAccounts.forEach(acc => {
       if (acc.name) {
@@ -264,6 +268,8 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     } catch (error) {
       console.error("Error syncing accounts to Firebase:", error);
       alert('⚠️ Saved locally, but cloud sync encountered an issue. Check your Firebase connection rules.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -288,7 +294,26 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     reader.readAsText(file);
   };
 
-  const sortedAccounts = [...localAccounts].sort((a, b) => { const nameA = String(a.name || ''); const nameB = String(b.name || ''); if (!nameA.trim()) return 1; if (!nameB.trim()) return -1; return nameA.localeCompare(nameB); });
+  // AGGRESSIVE VISUAL DEDUPLICATION (Fixes the ghost rows rendering on lag)
+  const sortedAccounts = [...localAccounts]
+    .reduce((acc, current) => {
+      const nameKey = String(current.name || '').trim().toLowerCase();
+      if (!nameKey) {
+        acc.push(current);
+      } else {
+        if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) {
+          acc.push(current);
+        }
+      }
+      return acc;
+    }, [])
+    .sort((a, b) => { 
+      const nameA = String(a.name || ''); 
+      const nameB = String(b.name || ''); 
+      if (!nameA.trim()) return 1; 
+      if (!nameB.trim()) return -1; 
+      return nameA.localeCompare(nameB); 
+    });
 
   const uniqueCategories = useMemo(() => {
     const baseCats = ["Bank Account / Cash in Hand", "Safe Box (Main Cash)", "Physical Till Float", "Accounts Payable (Supplier)", "Cost of Goods Sold (COGS)", "Operating Expenses", "Tax Liability / Asset", "Income / Revenue", "Equity / Owner Drawings"];
@@ -547,7 +572,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
                 <button onClick={addAccount} style={{ padding: '12px 24px', background: '#f1f5f9', color: '#0f172a', border: '1px solid #cbd5e1', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>+ Add Custom Account</button>
                 <button onClick={cancelChanges} style={{ padding: '12px 24px', background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}><XCircle size={16} /> Discard Changes</button>
               </div>
-              <button onClick={saveSettings} style={{ padding: '12px 32px', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}><Save size={18} /> Save Entire Chart of Accounts to Cloud</button>
+              <button onClick={saveSettings} disabled={isSaving} style={{ padding: '12px 32px', background: isSaving ? '#94a3b8' : '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: isSaving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}><Save size={18} /> {isSaving ? 'Processing...' : 'Save Entire Chart of Accounts to Cloud'}</button>
             </div>
           </div>
         </div>

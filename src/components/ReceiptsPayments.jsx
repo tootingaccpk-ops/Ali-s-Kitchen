@@ -80,6 +80,9 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
   const [showAccModal, setShowAccModal] = useState(false);
   const [newAccData, setNewAccData] = useState({ name: '', category: '' });
   
+  const [pendingJvLineIndex, setPendingJvLineIndex] = useState(null);
+  const [isSavingAcc, setIsSavingAcc] = useState(false);
+  
   const [linkModal, setLinkModal] = useState(null);
 
   const currentUserRole = (sessionStorage.getItem('erp_current_role') || '').toLowerCase();
@@ -153,7 +156,12 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
 
   const handleAccountSelect = (e) => {
     const val = e.target.value;
-    if (val === 'ADD_NEW_ACC') { setNewAccData({ name: '', category: '' }); setShowAccModal(true); return; }
+    if (val === 'ADD_NEW_ACC') { 
+        setPendingJvLineIndex(null);
+        setNewAccData({ name: '', category: '' }); 
+        setShowAccModal(true); 
+        return; 
+    }
     const acc = accountsDb.find(a => a.name === val);
     setFormData(prev => ({ ...prev, account: val, category: acc ? acc.category : '' }));
   };
@@ -185,14 +193,23 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
 
   const handleSaveAccount = async (e) => {
     e.preventDefault();
+    if (isSavingAcc) return;
     if (!newAccData.name.trim() || !newAccData.category) return alert("Please provide both an Account Name and a Category.");
+    
+    setIsSavingAcc(true);
     const accName = newAccData.name.trim();
     
-    const existingMatch = accountsDb.find(a => a.name.toLowerCase() === accName.toLowerCase());
+    const existingMatch = accountsDb.find(a => String(a.name).toLowerCase() === accName.toLowerCase());
     if (existingMatch) {
-      setFormData(prev => ({ ...prev, account: existingMatch.name, category: existingMatch.category }));
+      if (pendingJvLineIndex !== null) {
+          handleJvLine(pendingJvLineIndex, 'account', existingMatch.name);
+      } else {
+          setFormData(prev => ({ ...prev, account: existingMatch.name, category: existingMatch.category }));
+      }
       setShowAccModal(false);
       setNewAccData({ name: '', category: '' });
+      setPendingJvLineIndex(null);
+      setIsSavingAcc(false);
       return;
     }
     
@@ -202,10 +219,20 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
       const docRef = await addDoc(collection(firebaseDb, "erp_accounts"), newAccount);
       const finalAccount = { id: docRef.id, ...newAccount };
       if (setAccountsDb) setAccountsDb(prev => [finalAccount, ...prev]);
-      setFormData(prev => ({ ...prev, account: accName, category: newAccData.category }));
-      setShowAccModal(false); setNewAccData({ name: '', category: '' });
+      
+      if (pendingJvLineIndex !== null) {
+          handleJvLine(pendingJvLineIndex, 'account', accName);
+      } else {
+          setFormData(prev => ({ ...prev, account: accName, category: newAccData.category }));
+      }
+      
+      setShowAccModal(false); 
+      setNewAccData({ name: '', category: '' });
+      setPendingJvLineIndex(null);
     } catch (err) {
       alert("Database Error: Could not create account.");
+    } finally {
+      setIsSavingAcc(false);
     }
   };
 
@@ -485,7 +512,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
         String(row.toBank || '').toLowerCase().includes(term) || String(row.payee || '').toLowerCase().includes(term)
       ));
     }
-    // Enforce strict date descending sort (Newest first)
+    // Enforce strict date descending sort
     return result.sort((a, b) => new Date(normalizeDate(b.date)) - new Date(normalizeDate(a.date)));
   }, [db, searchTerm, filterDateFrom, filterDateTo, filterCategory, filterType, accountsDb, auditMode]);
 
@@ -550,10 +577,11 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
           </button>
         </div>
 
+        {/* MODALS */}
         {showCatModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ background: '#fff', width: '400px', borderRadius: '0', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Category</h2><button onClick={() => setShowCatModal(false)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', color: sheetTheme.headerBlueText }}>✖</button></div>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Category</h2><button onClick={() => {setShowCatModal(false); setPendingJvLineIndex(null);}} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', color: sheetTheme.headerBlueText }}>✖</button></div>
               <form onSubmit={handleSaveCategory} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: sheetTheme.font }}>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Category Name</label><input type="text" value={newCatData.name} onChange={e => setNewCatData({...newCatData, name: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required autoFocus /></div>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Financial Type</label><select value={newCatData.type} onChange={e => setNewCatData({...newCatData, type: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required><option value="Expense">Expense</option><option value="Income">Income</option><option value="Asset">Asset</option><option value="Liability">Liability</option><option value="Equity">Equity</option></select></div>
@@ -565,16 +593,17 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
         {showAccModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ background: '#fff', width: '400px', borderRadius: '0', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Ledger Account</h2><button onClick={() => setShowAccModal(false)} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', color: sheetTheme.headerBlueText }}>✖</button></div>
+              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Ledger Account</h2><button onClick={() => {setShowAccModal(false); setPendingJvLineIndex(null);}} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', color: sheetTheme.headerBlueText }}>✖</button></div>
               <form onSubmit={handleSaveAccount} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: sheetTheme.font }}>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Account / Ledger Name</label><input type="text" value={newAccData.name} onChange={e => setNewAccData({...newAccData, name: e.target.value})} placeholder="e.g. British Gas" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required autoFocus /></div>
                 <div><label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Account Category</label><select value={newAccData.category} onChange={(e) => { if (e.target.value === 'ADD_NEW_CAT') setShowCatModal(true); else setNewAccData({ ...newAccData, category: e.target.value }); }} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, boxSizing: 'border-box' }} required><option value="">-- Select Category --</option>{allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}<option value="ADD_NEW_CAT" style={{ fontWeight: '700', color: '#0369a1' }}>➕ Add New Category...</option></select></div>
-                <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', fontSize: '13px' }}>Save & Sync to Cloud</button>
+                <button type="submit" disabled={isSavingAcc} style={{ padding: '10px', background: isSavingAcc ? '#94a3b8' : '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: isSavingAcc ? 'not-allowed' : 'pointer', fontSize: '13px' }}>{isSavingAcc ? 'Saving...' : 'Save & Sync to Cloud'}</button>
               </form>
             </div>
           </div>
         )}
         
+        {/* LINK INVOICE MODAL */}
         {linkModal && !linkModal.isLoading && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.8)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ background: '#fff', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', fontFamily: sheetTheme.font, display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
@@ -727,6 +756,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                 </>
               )}
 
+              {/* ONLY RENDER AMOUNT & DESC IF NOT A JOURNAL */}
               {!isJournal && (
                 <>
                   <tr><td style={labelTd}>{isTransfer ? 'Transfer Amount (£)' : 'Gross Amount (£)'}</td><td style={{...inputTd, background: activeHeaderBg}}><CellInput type="number" step="any" name="amount" value={formData.amount} onChange={handleChange} onKeyDown={handleKeyDown} placeholder="0.00" align="left" required /></td></tr>
@@ -748,6 +778,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
             </tbody>
           </table>
 
+          {/* MULTI-LINE COMPOUND JV GRID */}
           {isJournal && (
             <div style={{ border: `1px solid ${sheetTheme.border}`, borderTop: 'none' }}>
               <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}` }}>
@@ -767,13 +798,26 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
                   {(formData.lines || []).map((line, idx) => (
                     <tr key={line.id || idx}>
                       <td style={{ padding: 0, border: `1px solid ${sheetTheme.border}` }}>
-                        <CellSelect value={line.account} onChange={e => handleJvLine(idx, 'account', e.target.value)} onKeyDown={handleKeyDown}>
+                        <CellSelect 
+                            value={line.account} 
+                            onChange={e => {
+                                if (e.target.value === 'ADD_NEW_ACC') {
+                                    setPendingJvLineIndex(idx);
+                                    setNewAccData({ name: '', category: '' });
+                                    setShowAccModal(true);
+                                } else {
+                                    handleJvLine(idx, 'account', e.target.value);
+                                }
+                            }} 
+                            onKeyDown={handleKeyDown}
+                        >
                           <option value="">-- Choose Account --</option>
                           {allCategories.map(cat => {
                              const accsInCat = allAccountsSorted.filter(a => a.category === cat);
                              if (accsInCat.length === 0) return null;
                              return (<optgroup key={cat} label={`📂 ${cat}`}>{accsInCat.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</optgroup>);
                           })}
+                          <option value="ADD_NEW_ACC" style={{ fontWeight: '700', color: '#0369a1' }}>➕ Add New Account...</option>
                         </CellSelect>
                       </td>
                       <td style={{ padding: 0, border: `1px solid ${sheetTheme.border}` }}><CellInput type="text" value={line.description || ''} onChange={e => handleJvLine(idx, 'description', e.target.value)} onKeyDown={handleKeyDown} placeholder="Optional line memo" /></td>
@@ -808,6 +852,7 @@ export default function ReceiptsPayments({ db = [], setDb, categoriesMap = {}, s
           </div>
         </form>
 
+        {/* LOG TABLE */}
         <div>
           <div style={{ background: sheetTheme.headerBlueBg, padding: '12px', border: `1px solid ${sheetTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
             <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: sheetTheme.headerBlueText }}>{auditMode ? 'AUDIT: Unlinked Manual Payments' : 'Master Transaction Log'}</h2>
