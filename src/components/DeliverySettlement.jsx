@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
-import { db as firebaseDb } from "../firebase"; // Adjusted path to match other files
+import { db as firebaseDb } from "../firebase"; 
 import { Trash2, Edit2, Plus } from 'lucide-react';
 
 const getToday = () => {
@@ -162,7 +162,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
   const [formData, setFormData] = useState(getInitialFormState());
   const [searchTerm, setSearchTerm] = useState('');
 
-  // MIGRATION SCRIPT FOR DELIVERY SETTLEMENTS
   useEffect(() => {
     const migrateDeliveryToFirebase = async () => {
       const localData = JSON.parse(localStorage.getItem('erp_delivery'));
@@ -170,7 +169,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
       
       if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
         try {
-          console.log("Migrating Delivery Settlements to Firebase...");
           const batch = writeBatch(firebaseDb);
           localData.forEach(record => {
             const recordId = record.id || Date.now().toString() + Math.random().toString(36).substring(7);
@@ -179,7 +177,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
           });
           await batch.commit();
           localStorage.setItem('erp_delivery_migrated', 'true');
-          console.log("Delivery Migration Complete!");
         } catch (error) {
           console.error("Migration failed: ", error);
         }
@@ -355,14 +352,14 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     try {
       await setDoc(doc(firebaseDb, "erp_delivery", recordToSave.id), recordToSave);
 
-      // EXACT SYSTEM NAME FOR MEMON SERVICES APPLIED HERE - SYNC TO FIREBASE RECEIPTS
+      // Auto-deposits purely into LK Associates as requested
       if (setReceiptsDb && formData.actualPayout && Number(formData.actualPayout) > 0 && formData.payoutDate) {
         const receiptEntry = {
           id: syncId,
           type: 'Receipt',
           date: formData.payoutDate,
           mode: 'Bank',
-          bankName: 'Memon Services Ltd', 
+          bankName: 'LK Associates', 
           category: 'Income / Revenue', 
           account: formData.platform,
           description: `Auto-Settlement: ${formData.platform} (${formatDate(formData.dateFrom)} to ${formatDate(formData.dateTo)})`,
@@ -382,7 +379,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
         }
         setReceiptsDb(updatedReceipts);
         
-        // Push auto-receipt directly to Firebase
         await setDoc(doc(firebaseDb, "erp_receipts", syncId), receiptEntry);
       }
 
@@ -413,7 +409,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
       try {
         await deleteDoc(doc(firebaseDb, "erp_delivery", row.id));
 
-        // AUTO-DELETE FROM MEMON SERVICES LEDGER IN FIREBASE
         if (setReceiptsDb && row.syncReceiptId) {
            const newReceipts = activeReceiptsDb.filter(r => r.id !== row.syncReceiptId);
            setReceiptsDb(newReceipts);
@@ -447,7 +442,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     <div style={{ padding: '24px', fontFamily: sheetTheme.font, background: '#ffffff', minHeight: '100vh', color: '#000' }}>
       <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
         
-        {/* HEADER */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '12px', marginBottom: '16px' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'normal', color: '#1f2937' }}>Delivery Settlements</h1>
@@ -486,10 +480,8 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
             </tbody>
           </table>
 
-          {/* SPREADSHEET GRID */}
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
             
-            {/* LEFT COLUMN: DEDUCTIONS */}
             <div style={{ flex: 1 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
@@ -524,7 +516,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
               </table>
             </div>
 
-            {/* RIGHT COLUMN: ADJUSTMENTS & VARIANCES */}
             <div style={{ flex: 1 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
@@ -532,7 +523,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                 </thead>
                 <tbody>
                   
-                  {/* POSITIVE ADJUSTMENTS MULTI-ROW */}
                   <tr><td colSpan="2" style={{ background: '#f1f5f9', fontSize: '12px', fontWeight: '700', padding: '6px 12px', color: '#059669', border: `1px solid ${sheetTheme.border}` }}>Positive Adjustments (+)</td></tr>
                   {formData.adjPosList.map((adj, index) => (
                     <tr key={`pos-${index}`}>
@@ -547,7 +537,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                   ))}
                   <tr><td colSpan="2" style={{ padding: '0', border: `1px solid ${sheetTheme.border}` }}><button type="button" onClick={() => addAdjRow('pos')} style={{ width: '100%', padding: '6px', background: '#fff', color: '#059669', border: 'none', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px' }}><Plus size={14}/> Add (+) Row</button></td></tr>
 
-                  {/* NEGATIVE ADJUSTMENTS MULTI-ROW */}
                   <tr><td colSpan="2" style={{ background: '#f1f5f9', fontSize: '12px', fontWeight: '700', padding: '6px 12px', color: '#dc2626', border: `1px solid ${sheetTheme.border}` }}>Negative Adjustments (-)</td></tr>
                   {formData.adjNegList.map((adj, index) => (
                     <tr key={`neg-${index}`}>
@@ -562,13 +551,12 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                   ))}
                   <tr><td colSpan="2" style={{ padding: '0', border: `1px solid ${sheetTheme.border}` }}><button type="button" onClick={() => addAdjRow('neg')} style={{ width: '100%', padding: '6px', background: '#fff', color: '#dc2626', border: 'none', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px' }}><Plus size={14}/> Add (-) Row</button></td></tr>
                   
-                  {/* EXPECTED & ACTUAL PAYOUT */}
                   <tr><td style={{...labelTd, fontWeight: '800', background: '#dbeafe'}}>ERP Expected Payout</td><td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={`£ ${fmtMoney(liveExpectedPayout)}`} bold={true} color="#1d4ed8" bg="#dbeafe" /></td></tr>
                   
                   <tr><td style={labelTd}>Actual Bank Payout (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="actualPayout" value={formData.actualPayout} onChange={handleChange} /></td></tr>
                   
                   <tr>
-                    <td style={labelTd}>Date Reached Bank</td>
+                    <td style={labelTd}>Date Received in Bank</td>
                     <td style={{...inputTd, padding: '8px 12px'}}>
                       <input type="date" className="enter-focusable" name="payoutDate" value={formData.payoutDate} onChange={handleChange} onKeyDown={handleKeyDown} style={{ width: '100%', border: 'none', outline: 'none', fontFamily: sheetTheme.font, fontSize: '13px', background: 'transparent' }} />
                     </td>
@@ -587,7 +575,7 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
               Cancel
             </button>
             <button type="button" onClick={handleSubmit} className="enter-focusable save-btn" style={{ padding: '8px 32px', background: formData.id ? '#166534' : '#0369a1', color: '#fff', fontSize: '13px', fontWeight: '700', border: 'none', cursor: 'pointer' }}>
-              {formData.id ? `Update ${formData.platform}` : `Save ${formData.platform}`}
+              {formData.id ? `Update ${formData.platform}` : `Mark Received: ${formData.platform}`}
             </button>
           </div>
         </div>

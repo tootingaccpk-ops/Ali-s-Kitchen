@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { doc, writeBatch } from "firebase/firestore";
-import { db as firebaseDb } from "../firebase"; // Renamed to avoid colliding with the 'db' prop
+import { db as firebaseDb } from "../firebase"; 
 
 const getToday = () => new Date().toISOString().split('T')[0];
 
@@ -17,7 +17,6 @@ const toDateNum = (dStr) => {
   return 0;
 };
 
-// STRICT MONEY FORMATTER
 const fmtMoney = (n) => {
   if (n === '' || n === null || n === undefined) return '';
   const num = Number(n);
@@ -25,10 +24,11 @@ const fmtMoney = (n) => {
   return num.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+// Removed M1/M2 to streamline the form for Ali's Kitchen
 const initialFormState = {
   date: getToday(),
   cashGross: '', cashRefund: '',
-  m1Gross: '', m1Refund: '', m2Gross: '', m2Refund: '', m3Gross: '', m3Refund: '',
+  m3Gross: '', m3Refund: '',
   tillCardGross: '', tillCardRefund: '', cardVarReason: '',
   uber: '', deliveroo: '', justEat: '', app4: '', otherDel: '',
   openingTill: 0,
@@ -46,7 +46,6 @@ const sheetTheme = {
 const labelTd = { border: `1px solid ${sheetTheme.border}`, padding: '6px 12px', fontSize: '12px', color: '#333', background: sheetTheme.labelBg, whiteSpace: 'nowrap', width: '40%' };
 const inputTd = { border: `1px solid ${sheetTheme.border}`, padding: '0', background: '#fff', width: '60%' };
 
-// SMART CELL INPUT
 const CellInput = ({ name, value, onChange, onKeyDown, type="number", placeholder="", align="right", inputRef=null, textColor="#000" }) => {
   const [isFocused, setIsFocused] = useState(false);
   
@@ -95,7 +94,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
   const [originalDate, setOriginalDate] = useState(null);
   const dateInputRef = useRef(null);
 
-  // MIGRATION SCRIPT
   useEffect(() => {
     const migrateToFirebase = async () => {
       const localData = JSON.parse(localStorage.getItem('erp_sales_db'));
@@ -103,7 +101,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
       
       if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
         try {
-          console.log("Migrating Daily Sales to Firebase...");
           const batch = writeBatch(firebaseDb);
           localData.forEach(record => {
             const docRef = doc(firebaseDb, "erp_sales_db", record.date);
@@ -111,7 +108,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
           });
           await batch.commit();
           localStorage.setItem('erp_sales_migrated', 'true');
-          console.log("Sales Migration Complete!");
         } catch (error) {
           console.error("Migration failed: ", error);
         }
@@ -181,7 +177,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
         return;
       }
     }
-    // If no existing record or user declined loading, refresh form for the new blank date
     setFormData({
       ...initialFormState,
       date: value,
@@ -318,16 +313,19 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
 
   const val = (num) => Number(num) || 0;
   const netCash = val(formData.cashGross) - val(formData.cashRefund);
-  const erpCardNet = (val(formData.m1Gross) - val(formData.m1Refund)) + (val(formData.m2Gross) - val(formData.m2Refund)) + (val(formData.m3Gross) - val(formData.m3Refund));
+  
+  // Exclusively routes the single input through the LK Associates mapping channel
+  const erpCardNet = (val(formData.m3Gross) - val(formData.m3Refund));
   const tillCardNet = val(formData.tillCardGross) - val(formData.tillCardRefund);
   const cardVariance = erpCardNet - tillCardNet;
+  
   const totalDelivery = val(formData.uber) + val(formData.deliveroo) + val(formData.justEat) + val(formData.app4) + val(formData.otherDel);
   
   const expectedTill = val(formData.openingTill) + netCash - val(formData.collections) - val(formData.safeBox);
   const tillVariance = val(formData.physicalTill) - expectedTill;
   
-  const erpTotalGross = val(formData.cashGross) + val(formData.m1Gross) + val(formData.m2Gross) + val(formData.m3Gross) + totalDelivery;
-  const erpTotalRefund = val(formData.cashRefund) + val(formData.m1Refund) + val(formData.m2Refund) + val(formData.m3Refund);
+  const erpTotalGross = val(formData.cashGross) + val(formData.m3Gross) + totalDelivery;
+  const erpTotalRefund = val(formData.cashRefund) + val(formData.m3Refund);
   const erpTotalNet = erpTotalGross - erpTotalRefund;
   const tillTotalNet = val(formData.tillSalesGross) - val(formData.tillSalesRefund);
   const salesVariance = erpTotalNet - tillTotalNet;
@@ -374,14 +372,12 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
                   <tr><td style={{...labelTd, width: '40%', textAlign: 'center'}}>Merchant</td><td style={{...labelTd, width: '20%', textAlign: 'center'}}>Gross (£)</td><td style={{...labelTd, width: '20%', textAlign: 'center'}}>Refund (£)</td><td style={{...labelTd, width: '20%', textAlign: 'center'}}>Net (£)</td></tr>
                 </thead>
                 <tbody>
-                  {[ { id: '1', name: 'Memon Services' }, { id: '2', name: 'Khanani Management' }, { id: '3', name: 'LK Associates' } ].map(merchant => (
-                    <tr key={merchant.id}>
-                      <td style={labelTd}>{merchant.name}</td>
-                      <td style={inputTd}><CellInput name={`m${merchant.id}Gross`} value={formData[`m${merchant.id}Gross`]} onChange={handleChange} onKeyDown={handleKeyDown} /></td>
-                      <td style={inputTd}><CellInput name={`m${merchant.id}Refund`} value={formData[`m${merchant.id}Refund`]} onChange={handleChange} onKeyDown={handleKeyDown} /></td>
-                      <td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={fmtMoney(val(formData[`m${merchant.id}Gross`]) - val(formData[`m${merchant.id}Refund`]))} /></td>
-                    </tr>
-                  ))}
+                  <tr>
+                    <td style={labelTd}>Card Sales (LK Associates)</td>
+                    <td style={inputTd}><CellInput name="m3Gross" value={formData.m3Gross} onChange={handleChange} onKeyDown={handleKeyDown} /></td>
+                    <td style={inputTd}><CellInput name="m3Refund" value={formData.m3Refund} onChange={handleChange} onKeyDown={handleKeyDown} /></td>
+                    <td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={fmtMoney(val(formData.m3Gross) - val(formData.m3Refund))} /></td>
+                  </tr>
                   <tr><td colSpan="3" style={{...labelTd, textAlign: 'right', fontWeight: '700'}}>Total ERP Card Net (£)</td><td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={fmtMoney(erpCardNet)} bold={true} bg="#e2efda" color="#276749" /></td></tr>
                 </tbody>
               </table>

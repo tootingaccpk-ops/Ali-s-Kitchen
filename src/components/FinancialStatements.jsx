@@ -91,7 +91,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       headers.forEach((h, i) => { html += `<th style="background-color: #0f172a; color: #ffffff; font-weight: bold; text-align: ${i === 0 || i === headers.length - 1 ? 'left' : 'right'}; border: 1px solid #000000;">${h}</th>`; }); 
       html += `</tr>`;
       
-      dataRows.forEach((row, rowIndex) => { 
+      dataRows.forEach((row) => { 
         html += `<tr>`; 
         row.forEach((val, i) => {
           const text = String(row[0] || '');
@@ -173,12 +173,12 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
        return toDateObj(settleDate) >= toDateObj(dateFrom) && toDateObj(settleDate) <= toDateObj(dateTo);
     });
     
-    const initCols = () => ({ cash: 0, memon: 0, khanani: 0, lk: 0, total: 0 });
-    const colKeys = ['cash', 'memon', 'khanani', 'lk', 'total'];
+    // Purged Memon and Khanani. Streamlined to Cash, LK Associates, Total
+    const initCols = () => ({ cash: 0, lk: 0, total: 0 });
+    const colKeys = ['cash', 'lk', 'total'];
     
     let salesMap = {}; let refundsMap = {}; let cogsMap = {}; let otherIncomeMap = {}; let promoMap = {}; let expensesMap = {};
     
-    // Detailed VAT Maps
     let vatSalesCols = initCols();
     let vatPurchasesCols = initCols();
     let vatDeliveryMap = {};
@@ -209,11 +209,10 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       map[category].items[itemName].total += nAmt;
     };
 
+    // Safely catches any rogue historical M1/M2 data and forces it into the LK column
     const getBankCol = (name) => {
       if (!name) return null; const n = String(name).toLowerCase();
-      if (n.includes('memon')) return 'memon';
-      if (n.includes('khanani')) return 'khanani';
-      if (n.includes('lk')) return 'lk';
+      if (n.includes('lk') || n.includes('memon') || n.includes('khanani')) return 'lk';
       if (n.includes('cash') || n.includes('till')) return 'cash';
       return null;
     };
@@ -231,9 +230,10 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     validSales.forEach(s => {
       if (!s) return;
       const cashG = Number(s.cashGross) || 0; 
-      const m1G = Number(s.m1Gross) || 0; 
-      const m2G = Number(s.m2Gross) || 0; 
-      const m3G = Number(s.m3Gross) || 0;
+      
+      // Pulls LK Associates gross, while safely lumping in any legacy M1/M2 data to prevent history loss
+      const lkG = (Number(s.m3Gross) || 0) + (Number(s.m1Gross) || 0) + (Number(s.m2Gross) || 0); 
+      
       const uber = Number(s.uber) || 0;
       const deliv = Number(s.deliveroo) || 0;
       const justEat = Number(s.justEat) || 0;
@@ -243,21 +243,17 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       const vatVal = Number(s.vatAmount) || Number(s.totalVat) || Number(s.vatCollected) || Number(s.vat) || 0;
       
       addAmt(salesMap, 'Cash Sales', cashG, 'cash');
-      addAmt(salesMap, 'Card Sales - Memon', m1G, 'memon');
-      addAmt(salesMap, 'Card Sales - Khanani', m2G, 'khanani');
-      addAmt(salesMap, 'Card Sales - LK', m3G, 'lk');
-      addAmt(salesMap, 'Delivery - Uber Eats', uber, 'memon');
-      addAmt(salesMap, 'Delivery - Deliveroo', deliv, 'memon');
-      addAmt(salesMap, 'Delivery - Just Eat', justEat, 'memon');
-      addAmt(salesMap, 'Delivery - App4', app4, 'memon');
-      addAmt(salesMap, 'Delivery - Other', otherD, 'memon');
+      addAmt(salesMap, 'Card Sales (LK Associates)', lkG, 'lk');
+      addAmt(salesMap, 'Delivery - Uber Eats', uber, 'lk');
+      addAmt(salesMap, 'Delivery - Deliveroo', deliv, 'lk');
+      addAmt(salesMap, 'Delivery - Just Eat', justEat, 'lk');
+      addAmt(salesMap, 'Delivery - App4', app4, 'lk');
+      addAmt(salesMap, 'Delivery - Other', otherD, 'lk');
 
+      const lkRef = (Number(s.m3Refund)||0) + (Number(s.m1Refund)||0) + (Number(s.m2Refund)||0);
       addAmt(refundsMap, 'Cash Refunds', Number(s.cashRefund)||0, 'cash');
-      addAmt(refundsMap, 'Card Refunds - Memon', Number(s.m1Refund)||0, 'memon');
-      addAmt(refundsMap, 'Card Refunds - Khanani', Number(s.m2Refund)||0, 'khanani');
-      addAmt(refundsMap, 'Card Refunds - LK', Number(s.m3Refund)||0, 'lk');
+      addAmt(refundsMap, 'Card Refunds (LK Associates)', lkRef, 'lk');
 
-      // VAT on Sales completely unassigned to columns - kept exclusively in the Total Column
       vatSalesCols.total += vatVal;
 
       const coll = Number(s.collections) || 0;
@@ -269,10 +265,8 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       if (tillVar > 0) totalTillOverage += tillVar;
       if (tillVar < 0) totalTillShortage += Math.abs(tillVar);
 
-      const m1Net = m1G - (Number(s.m1Refund)||0);
-      const m2Net = m2G - (Number(s.m2Refund)||0);
-      const m3Net = m3G - (Number(s.m3Refund)||0);
-      totalErpCardNet += (m1Net + m2Net + m3Net);
+      const lkNet = lkG - lkRef;
+      totalErpCardNet += lkNet;
       
       const tillCardGross = Number(s.tillCardGross) || 0;
       const tillCardRefund = Number(s.tillCardRefund) || 0;
@@ -290,17 +284,17 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     validDelivery.forEach(d => {
        if (!d) return;
        const pName = d.platform || 'Unknown Platform';
-       addAmt(promoMap, `${pName} - Commissions`, Number(d.commission)||0, 'memon');
-       addAmt(promoMap, `${pName} - Advertisements`, Number(d.advertisement)||0, 'memon');
-       addAmt(promoMap, `${pName} - Service Charges`, Number(d.serviceCharges)||0, 'memon');
-       addAmt(promoMap, `${pName} - Refunds`, Number(d.refunds)||0, 'memon');
+       addAmt(promoMap, `${pName} - Commissions`, Number(d.commission)||0, 'lk');
+       addAmt(promoMap, `${pName} - Advertisements`, Number(d.advertisement)||0, 'lk');
+       addAmt(promoMap, `${pName} - Service Charges`, Number(d.serviceCharges)||0, 'lk');
+       addAmt(promoMap, `${pName} - Refunds`, Number(d.refunds)||0, 'lk');
        
        const dVat = (Number(d.vatOnCommission)||0) + (Number(d.vatOnAdvertisement)||0) + (Number(d.vatOnServiceCharges)||0);
-       addAmt(vatDeliveryMap, pName, dVat, 'memon');
+       addAmt(vatDeliveryMap, pName, dVat, 'lk');
 
        const pVar = (Number(d.actualPayout)||0) - (Number(d.expectedPayout)||0);
-       if (pVar > 0) addAmt(otherIncomeMap, `Net Variance - ${pName} (Overage)`, pVar, 'memon');
-       else if (pVar < 0) addAmtNested(expensesMap, `Net Variance - ${pName} (Shortage)`, 'System Adjustment', Math.abs(pVar), 'memon');
+       if (pVar > 0) addAmt(otherIncomeMap, `Net Variance - ${pName} (Overage)`, pVar, 'lk');
+       else if (pVar < 0) addAmtNested(expensesMap, `Net Variance - ${pName} (Shortage)`, 'System Adjustment', Math.abs(pVar), 'lk');
     });
 
     validPurchases.forEach(inv => { 
@@ -309,7 +303,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       
       const linkedPayments = validReceipts.filter(r => r.linkedInvoiceId === inv.id && r.type === 'Payment');
 
-      // Distribute Purchase VAT based on Payment Source Split
       if (linkedPayments.length > 0) {
           const totalPaid = linkedPayments.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) || 1;
           linkedPayments.forEach(pay => {
@@ -319,7 +312,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
              if (col && typeof vatPurchasesCols[col] !== 'undefined') {
                  vatPurchasesCols[col] += shareVat;
              } else {
-                 vatPurchasesCols.cash += shareVat; // fallback to cash
+                 vatPurchasesCols.cash += shareVat; 
              }
           });
           vatPurchasesCols.total += invVat;
@@ -327,7 +320,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
           vatPurchasesCols.total += invVat;
       }
 
-      // Distribute Purchase Lines (Gross) based on Payment Source Split
       if (Array.isArray(inv.lines)) {
           inv.lines.forEach(line => { 
             if (line && line.account && isValidAccount(line.account)) {
@@ -472,7 +464,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
         grossProfitCols[c] = totalIncomeCols[c] - (cData.totals[c]||0);
         netProfitIncVatCols[c] = grossProfitCols[c] - (pData.totals[c]||0) - (eData.totals[c]||0);
         
-        // Exact column-by-column VAT reduction
         netVatAmountCols[c] = (vatSalesCols[c]||0) - (vatPurchasesCols[c]||0) - (vdData.totals[c]||0);
         netProfitExcVatCols[c] = netProfitIncVatCols[c] - netVatAmountCols[c];
     });
@@ -485,7 +476,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     };
   }, [salesDb, purchasesDb, receiptsDb, actualDeliveryDb, dateFrom, dateTo, categoriesMap, accountsDb, activeAccountNames]);
 
-  const pnlDetailedHeaders = ['Account / Category Name', 'Cash', 'Memon Services', 'Khanani Mgt', 'LK Associates', 'Total £', 'Ratio'];
+  const pnlDetailedHeaders = ['Account / Category Name', 'Cash', 'LK Associates', 'Total £', 'Ratio'];
   const pnlCombinedHeaders = ['Account / Category Name', 'Amount (£)', 'Ratio'];
 
   const getActiveExportRows = (isCombined) => {
@@ -494,94 +485,93 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
 
     const addSection = (title, dataObj, subtotalLabel) => {
       if (dataObj && dataObj.arr && dataObj.arr.length > 0) {
-        rows.push([`--- ${title} ---`, ...Array(isCombined ? 2 : 6).fill('')]);
+        rows.push([`--- ${title} ---`, ...Array(isCombined ? 2 : 4).fill('')]);
         dataObj.arr.forEach(r => {
           if (isCombined) rows.push([r.Account, fmtCol(r.total), calcRatio(r.total, tg)]);
-          else rows.push([r.Account, fmtCol(r.cash), fmtCol(r.memon), fmtCol(r.khanani), fmtCol(r.lk), fmtCol(r.total), calcRatio(r.total, tg)]);
+          else rows.push([r.Account, fmtCol(r.cash), fmtCol(r.lk), fmtCol(r.total), calcRatio(r.total, tg)]);
         });
         if (subtotalLabel) {
           if (isCombined) rows.push([subtotalLabel, fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
-          else rows.push([subtotalLabel, fmtCol(dataObj.totals.cash), fmtCol(dataObj.totals.memon), fmtCol(dataObj.totals.khanani), fmtCol(dataObj.totals.lk), fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
+          else rows.push([subtotalLabel, fmtCol(dataObj.totals.cash), fmtCol(dataObj.totals.lk), fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
         }
       }
     };
 
     const addNestedSection = (title, dataObj, subtotalLabel) => {
       if (dataObj && dataObj.arr && dataObj.arr.length > 0) {
-        rows.push([`--- ${title} ---`, ...Array(isCombined ? 2 : 6).fill('')]);
+        rows.push([`--- ${title} ---`, ...Array(isCombined ? 2 : 4).fill('')]);
         dataObj.arr.forEach(cat => {
           const isFlat = cat.items.every(i => genericItemNames.includes(i.ItemName));
           
           if (isFlat) {
             if (isCombined) rows.push([cat.Category, fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
-            else rows.push([cat.Category, fmtCol(cat.subtotal.cash), fmtCol(cat.subtotal.memon), fmtCol(cat.subtotal.khanani), fmtCol(cat.subtotal.lk), fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
+            else rows.push([cat.Category, fmtCol(cat.subtotal.cash), fmtCol(cat.subtotal.lk), fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
           } else {
-            rows.push([`[Group] ${cat.Category}`, ...Array(isCombined ? 2 : 6).fill('')]);
+            rows.push([`[Group] ${cat.Category}`, ...Array(isCombined ? 2 : 4).fill('')]);
             cat.items.forEach(item => {
               if (isCombined) rows.push([`    - ${item.ItemName}`, fmtCol(item.total), calcRatio(item.total, tg)]);
-              else rows.push([`    - ${item.ItemName}`, fmtCol(item.cash), fmtCol(item.memon), fmtCol(item.khanani), fmtCol(item.lk), fmtCol(item.total), calcRatio(item.total, tg)]);
+              else rows.push([`    - ${item.ItemName}`, fmtCol(item.cash), fmtCol(item.lk), fmtCol(item.total), calcRatio(item.total, tg)]);
             });
             if (isCombined) rows.push([`Total ${cat.Category}`, fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
-            else rows.push([`Total ${cat.Category}`, fmtCol(cat.subtotal.cash), fmtCol(cat.subtotal.memon), fmtCol(cat.subtotal.khanani), fmtCol(cat.subtotal.lk), fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
+            else rows.push([`Total ${cat.Category}`, fmtCol(cat.subtotal.cash), fmtCol(cat.subtotal.lk), fmtCol(cat.subtotal.total), calcRatio(cat.subtotal.total, tg)]);
           }
         });
         if (subtotalLabel) {
           if (isCombined) rows.push([subtotalLabel, fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
-          else rows.push([subtotalLabel, fmtCol(dataObj.totals.cash), fmtCol(dataObj.totals.memon), fmtCol(dataObj.totals.khanani), fmtCol(dataObj.totals.lk), fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
+          else rows.push([subtotalLabel, fmtCol(dataObj.totals.cash), fmtCol(dataObj.totals.lk), fmtCol(dataObj.totals.total), calcRatio(dataObj.totals.total, tg)]);
         }
       }
     };
 
     const addSub = (title, totalsObj) => {
         if (isCombined) rows.push([title, fmtCol(totalsObj.total), calcRatio(totalsObj.total, tg)]);
-        else rows.push([title, fmtCol(totalsObj.cash), fmtCol(totalsObj.memon), fmtCol(totalsObj.khanani), fmtCol(totalsObj.lk), fmtCol(totalsObj.total), calcRatio(totalsObj.total, tg)]);
+        else rows.push([title, fmtCol(totalsObj.cash), fmtCol(totalsObj.lk), fmtCol(totalsObj.total), calcRatio(totalsObj.total, tg)]);
     }
 
     addSection('GROSS SALES', pnlData.sData, 'Total Gross Sales');
     addSection('LESS: REFUNDS', pnlData.rData, 'Total Refunds');
     addSub('NET SALES', pnlData.netSalesCols);
-    rows.push([...Array(isCombined ? 3 : 7).fill('')]);
+    rows.push([...Array(isCombined ? 3 : 5).fill('')]);
 
     if (pnlData.oiData.arr.length > 0) {
       addSection('OTHER INCOME (POSITIVE VARIANCES)', pnlData.oiData, 'Total Other Income');
       addSub('TOTAL INCOME', pnlData.totalIncomeCols);
-      rows.push([...Array(isCombined ? 3 : 7).fill('')]);
+      rows.push([...Array(isCombined ? 3 : 5).fill('')]);
     }
 
     addNestedSection('COST OF GOODS SOLD (COGS) & PURCHASES', pnlData.cData, 'Total COGS & Purchases');
     addSub('GROSS PROFIT', pnlData.grossProfitCols);
-    rows.push([...Array(isCombined ? 3 : 7).fill('')]);
+    rows.push([...Array(isCombined ? 3 : 5).fill('')]);
     
     addSection('PLATFORM FEES & DEDUCTIONS', pnlData.pData, 'Total Platform Fees');
     addNestedSection('OPERATING EXPENSES (INC. NEGATIVE VARIANCES)', pnlData.eData, 'Total Operating Expenses');
     addSub('NET PROFIT INCLUSIVE VAT', pnlData.netProfitIncVatCols);
-    rows.push([...Array(isCombined ? 3 : 7).fill('')]);
+    rows.push([...Array(isCombined ? 3 : 5).fill('')]);
 
-    // EXPORT VAT CALCULATION
-    rows.push(['--- VAT CALCULATION ---', ...Array(isCombined ? 2 : 6).fill('')]);
+    rows.push(['--- VAT CALCULATION ---', ...Array(isCombined ? 2 : 4).fill('')]);
     
     if (isCombined) rows.push(['VAT Collected on Sales', fmtCol(pnlData.vatSalesCols.total), calcRatio(pnlData.vatSalesCols.total, tg)]);
-    else rows.push(['VAT Collected on Sales', '-', '-', '-', '-', fmtCol(pnlData.vatSalesCols.total), calcRatio(pnlData.vatSalesCols.total, tg)]);
+    else rows.push(['VAT Collected on Sales', '-', '-', fmtCol(pnlData.vatSalesCols.total), calcRatio(pnlData.vatSalesCols.total, tg)]);
 
     if (isCombined) rows.push(['Less: VAT Paid on Purchases and Expenses', fmtCol(pnlData.vatPurchasesCols.total), calcRatio(pnlData.vatPurchasesCols.total, tg)]);
-    else rows.push(['Less: VAT Paid on Purchases and Expenses', fmtCol(pnlData.vatPurchasesCols.cash), fmtCol(pnlData.vatPurchasesCols.memon), fmtCol(pnlData.vatPurchasesCols.khanani), fmtCol(pnlData.vatPurchasesCols.lk), fmtCol(pnlData.vatPurchasesCols.total), calcRatio(pnlData.vatPurchasesCols.total, tg)]);
+    else rows.push(['Less: VAT Paid on Purchases and Expenses', fmtCol(pnlData.vatPurchasesCols.cash), fmtCol(pnlData.vatPurchasesCols.lk), fmtCol(pnlData.vatPurchasesCols.total), calcRatio(pnlData.vatPurchasesCols.total, tg)]);
 
-    rows.push(['[Group] Less: VAT Collected by Platforms', ...Array(isCombined ? 2 : 6).fill('')]);
+    rows.push(['[Group] Less: VAT Collected by Platforms', ...Array(isCombined ? 2 : 4).fill('')]);
     pnlData.vdData.arr.forEach(r => {
         if (isCombined) rows.push([`    - ${r.Account}`, fmtCol(r.total), calcRatio(r.total, tg)]);
-        else rows.push([`    - ${r.Account}`, fmtCol(r.cash), fmtCol(r.memon), fmtCol(r.khanani), fmtCol(r.lk), fmtCol(r.total), calcRatio(r.total, tg)]);
+        else rows.push([`    - ${r.Account}`, fmtCol(r.cash), fmtCol(r.lk), fmtCol(r.total), calcRatio(r.total, tg)]);
     });
 
     if (isCombined) rows.push(['Total VAT Collected by Platforms', fmtCol(pnlData.vdData.totals.total), calcRatio(pnlData.vdData.totals.total, tg)]);
-    else rows.push(['Total VAT Collected by Platforms', fmtCol(pnlData.vdData.totals.cash), fmtCol(pnlData.vdData.totals.memon), fmtCol(pnlData.vdData.totals.khanani), fmtCol(pnlData.vdData.totals.lk), fmtCol(pnlData.vdData.totals.total), calcRatio(pnlData.vdData.totals.total, tg)]);
+    else rows.push(['Total VAT Collected by Platforms', fmtCol(pnlData.vdData.totals.cash), fmtCol(pnlData.vdData.totals.lk), fmtCol(pnlData.vdData.totals.total), calcRatio(pnlData.vdData.totals.total, tg)]);
 
     if (isCombined) rows.push(['NET VAT AMOUNT', fmtCol(pnlData.netVatAmountCols.total), calcRatio(pnlData.netVatAmountCols.total, tg)]);
-    else rows.push(['NET VAT AMOUNT', fmtCol(pnlData.netVatAmountCols.cash), fmtCol(pnlData.netVatAmountCols.memon), fmtCol(pnlData.netVatAmountCols.khanani), fmtCol(pnlData.netVatAmountCols.lk), fmtCol(pnlData.netVatAmountCols.total), calcRatio(pnlData.netVatAmountCols.total, tg)]);
+    else rows.push(['NET VAT AMOUNT', fmtCol(pnlData.netVatAmountCols.cash), fmtCol(pnlData.netVatAmountCols.lk), fmtCol(pnlData.netVatAmountCols.total), calcRatio(pnlData.netVatAmountCols.total, tg)]);
 
-    rows.push([...Array(isCombined ? 3 : 7).fill('')]);
+    rows.push([...Array(isCombined ? 3 : 5).fill('')]);
     
     if (isCombined) rows.push(['NET PROFIT EXCLUSIVE VAT', fmtCol(pnlData.netProfitExcVatCols.total), calcRatio(pnlData.netProfitExcVatCols.total, tg)]);
-    else rows.push(['NET PROFIT EXCLUSIVE VAT', fmtCol(pnlData.netProfitExcVatCols.cash), fmtCol(pnlData.netProfitExcVatCols.memon), fmtCol(pnlData.netProfitExcVatCols.khanani), fmtCol(pnlData.netProfitExcVatCols.lk), fmtCol(pnlData.netProfitExcVatCols.total), calcRatio(pnlData.netProfitExcVatCols.total, tg)]);
+    else rows.push(['NET PROFIT EXCLUSIVE VAT', fmtCol(pnlData.netProfitExcVatCols.cash), fmtCol(pnlData.netProfitExcVatCols.lk), fmtCol(pnlData.netProfitExcVatCols.total), calcRatio(pnlData.netProfitExcVatCols.total, tg)]);
 
     return rows;
   };
@@ -702,19 +692,20 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     (salesDb || []).forEach(s => {
         if (!s || toDateObj(s.date) > targetDateObj) return;
         const cashNet = (Number(s.cashGross)||0) - (Number(s.cashRefund)||0);
-        const m1Net = (Number(s.m1Gross)||0) - (Number(s.m1Refund)||0);
-        const m2Net = (Number(s.m2Gross)||0) - (Number(s.m2Refund)||0);
-        const m3Net = (Number(s.m3Gross)||0) - (Number(s.m3Refund)||0);
+        
+        // Consolidates legacy M1/M2 data safely into LK Associates for the ledger
+        const lkNet = ((Number(s.m3Gross)||0) - (Number(s.m3Refund)||0)) + 
+                      ((Number(s.m1Gross)||0) - (Number(s.m1Refund)||0)) + 
+                      ((Number(s.m2Gross)||0) - (Number(s.m2Refund)||0));
+        
         const uber = Number(s.uber)||0; const del = Number(s.deliveroo)||0; 
         const je = Number(s.justEat)||0; const app4 = Number(s.app4)||0; 
         const otherDel = Number(s.otherDel)||0;
         const vat = Number(s.vatAmount)||Number(s.totalVat)||Number(s.vatCollected)||Number(s.vat)||0;
-        const netSales = cashNet + m1Net + m2Net + m3Net + uber + del + je + app4 + otherDel - vat;
+        const netSales = cashNet + lkNet + uber + del + je + app4 + otherDel - vat;
 
         post('Physical Till Drawer', cashNet, 0);
-        post('Memon Services Ltd', m1Net, 0);
-        post('Khanani Management', m2Net, 0);
-        post('LK Associates', m3Net, 0);
+        post('LK Associates', lkNet, 0);
         post('Uber Eats', uber, 0);
         post('Deliveroo', del, 0);
         post('Just Eat', je, 0);
@@ -932,14 +923,12 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     return (
       <React.Fragment>
         <tr style={{ background: '#f8fafc' }}>
-          <td colSpan={isCombined ? 3 : 7} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>--- {title} ---</td>
+          <td colSpan={isCombined ? 3 : 5} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>--- {title} ---</td>
         </tr>
         {dataObj.arr.map((r, i) => (
           <tr key={`${title}-${i}`} style={{ borderBottom: `1px solid ${theme.border}` }}>
             <td style={{ padding: '10px 14px', fontWeight: '800', fontSize: '12px' }}>{r.Account}</td>
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(r.cash)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(r.memon)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(r.khanani)}</td>}
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(r.lk)}</td>}
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>{fmtCol(r.total)}</td>
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{calcRatio(r.total, uiRatioBase)}</td>
@@ -949,8 +938,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
           <tr style={{ background: '#fef9c3', borderTop: `1px solid ${theme.border}`, borderBottom: `2px solid ${theme.border}` }}>
             <td style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: '#000' }}>{subtotalLabel}</td>
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.cash)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.memon)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.khanani)}</td>}
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.lk)}</td>}
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.total)}</td>
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{calcRatio(dataObj.totals.total, uiRatioBase)}</td>
@@ -965,7 +952,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     return (
       <React.Fragment>
         <tr style={{ background: '#f8fafc' }}>
-          <td colSpan={isCombined ? 3 : 7} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>--- {title} ---</td>
+          <td colSpan={isCombined ? 3 : 5} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>--- {title} ---</td>
         </tr>
         {dataObj.arr.map((cat, i) => {
           const isFlat = cat.items.every(item => genericItemNames.includes(item.ItemName));
@@ -975,8 +962,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
               <tr key={`${title}-${i}`} style={{ borderBottom: `1px solid ${theme.border}` }}>
                 <td style={{ padding: '10px 14px', fontWeight: '800', fontSize: '12px' }}>{cat.Category}</td>
                 {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(cat.subtotal.cash)}</td>}
-                {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(cat.subtotal.memon)}</td>}
-                {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(cat.subtotal.khanani)}</td>}
                 {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(cat.subtotal.lk)}</td>}
                 <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: customColor || '#000' }}>{fmtCol(cat.subtotal.total)}</td>
                 <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{calcRatio(cat.subtotal.total, uiRatioBase)}</td>
@@ -988,14 +973,12 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
             <React.Fragment key={`${title}-${i}`}>
               <tr style={{ background: '#f1f5f9', borderTop: `1px solid ${theme.border}` }}>
                 <td style={{ padding: '8px 14px', fontWeight: '800', fontSize: '12px', color: '#334155' }}>{cat.Category}</td>
-                <td colSpan={isCombined ? 2 : 6}></td>
+                <td colSpan={isCombined ? 2 : 4}></td>
               </tr>
               {cat.items.map((item, j) => (
                 <tr key={`${title}-${i}-${j}`} style={{ borderBottom: `1px solid ${theme.border}`, background: '#fff' }}>
                   <td style={{ padding: '8px 14px 8px 32px', fontWeight: '600', fontSize: '12px', color: '#475569' }}>  - {item.ItemName}</td>
                   {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{fmtCol(item.cash)}</td>}
-                  {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{fmtCol(item.memon)}</td>}
-                  {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{fmtCol(item.khanani)}</td>}
                   {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{fmtCol(item.lk)}</td>}
                   <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: customColor || '#000' }}>{fmtCol(item.total)}</td>
                   <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{calcRatio(item.total, uiRatioBase)}</td>
@@ -1004,8 +987,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
               <tr style={{ borderBottom: `1px solid ${theme.border}`, background: '#f8fafc' }}>
                 <td style={{ padding: '8px 14px 8px 14px', fontWeight: '800', fontSize: '12px', color: '#0f172a' }}>Total {cat.Category}</td>
                 {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{fmtCol(cat.subtotal.cash)}</td>}
-                {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{fmtCol(cat.subtotal.memon)}</td>}
-                {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{fmtCol(cat.subtotal.khanani)}</td>}
                 {!isCombined && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{fmtCol(cat.subtotal.lk)}</td>}
                 <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: customColor || '#000' }}>{fmtCol(cat.subtotal.total)}</td>
                 <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{calcRatio(cat.subtotal.total, uiRatioBase)}</td>
@@ -1017,8 +998,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
           <tr style={{ background: '#fef9c3', borderTop: `1px solid ${theme.border}`, borderBottom: `2px solid ${theme.border}` }}>
             <td style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: '#000' }}>{subtotalLabel}</td>
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.cash)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.memon)}</td>}
-            {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.khanani)}</td>}
             {!isCombined && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.lk)}</td>}
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(dataObj.totals.total)}</td>
             <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{calcRatio(dataObj.totals.total, uiRatioBase)}</td>
@@ -1032,8 +1011,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     <tr style={{ background: isGrandTotal ? '#dcfce7' : '#dcfce7', borderTop: isGrandTotal ? `2px solid #166534` : `2px solid #166534`, borderBottom: isGrandTotal ? `2px solid #166534` : `2px solid #166534` }}>
         <td style={{ padding: '12px 14px', fontWeight: '900', fontSize: '13px', color: '#000' }}>{label}</td>
         {!isCombined && <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '13px', color: '#000' }}>{totalsObj.cash !== undefined ? fmtCol(totalsObj.cash) : '-'}</td>}
-        {!isCombined && <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '13px', color: '#000' }}>{totalsObj.memon !== undefined ? fmtCol(totalsObj.memon) : '-'}</td>}
-        {!isCombined && <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '13px', color: '#000' }}>{totalsObj.khanani !== undefined ? fmtCol(totalsObj.khanani) : '-'}</td>}
         {!isCombined && <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '13px', color: '#000' }}>{totalsObj.lk !== undefined ? fmtCol(totalsObj.lk) : '-'}</td>}
         <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '14px', color: '#000' }}>{fmtCol(totalsObj.total !== undefined ? totalsObj.total : totalsObj)}</td>
         <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', fontSize: '13px', color: '#000' }}>{calcRatio(totalsObj.total !== undefined ? totalsObj.total : totalsObj, uiRatioBase)}</td>
@@ -1123,7 +1100,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                   </div>
                   <div style={{ background: '#fff', padding: '16px', borderRadius: '8px', border: `1px solid ${theme.border}`, minWidth: '160px', textAlign: 'center' }}>
                     <div style={{ fontSize: '11px', fontWeight: '800', color: '#9333ea', textTransform: 'uppercase', marginBottom: '8px' }}>VAT Collected</div>
-                    <div style={{ fontSize: '18px', fontWeight: '900', color: '#7e22ce' }}>£ {fmtCol(pnlData.totalVatSales)}</div>
+                    <div style={{ fontSize: '18px', fontWeight: '900', color: '#7e22ce' }}>£ {fmtCol(pnlData.vatSalesCols.total)}</div>
                   </div>
                   <div style={{ background: '#fff', padding: '16px', borderRadius: '8px', border: `1px solid ${theme.border}`, minWidth: '160px', textAlign: 'center' }}>
                     <div style={{ fontSize: '11px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', marginBottom: '8px' }}>Net Profit (Inc. VAT)</div>
@@ -1141,8 +1118,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       <tr>
                         <th style={{ padding: '12px 14px', textAlign: 'left', fontWeight: '900' }}>Account / Category Name</th>
                         {!isComb && <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>Cash (£)</th>}
-                        {!isComb && <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>Memon Services (£)</th>}
-                        {!isComb && <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>Khanani Mgt (£)</th>}
                         {!isComb && <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>LK Associates (£)</th>}
                         <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>{isComb ? 'Amount (£)' : 'Total (£)'}</th>
                         <th style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900' }}>Ratio</th>
@@ -1165,13 +1140,11 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       {renderSubtotal('NET PROFIT INCLUSIVE VAT', pnlData.netProfitIncVatCols, isComb, '#0369a1')}
                       
                       <tr style={{ background: '#f8fafc' }}>
-                        <td colSpan={isComb ? 3 : 7} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: '#000' }}>--- VAT CALCULATION ---</td>
+                        <td colSpan={isComb ? 3 : 5} style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: '#000' }}>--- VAT CALCULATION ---</td>
                       </tr>
                       
                       <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
                         <td style={{ padding: '10px 14px', fontWeight: '700', fontSize: '12px' }}>VAT Collected on Sales</td>
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>-</td>}
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>-</td>}
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>-</td>}
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>-</td>}
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{fmtCol(pnlData.vatSalesCols.total)}</td>
@@ -1181,8 +1154,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
                         <td style={{ padding: '10px 14px', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>Less: VAT Paid on Purchases and Expenses</td>
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vatPurchasesCols.cash)}</td>}
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vatPurchasesCols.memon)}</td>}
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vatPurchasesCols.khanani)}</td>}
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vatPurchasesCols.lk)}</td>}
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vatPurchasesCols.total)}</td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px' }}>{calcRatio(pnlData.vatPurchasesCols.total, uiRatioBase)}</td>
@@ -1190,14 +1161,12 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       
                       <tr style={{ background: '#f1f5f9', borderTop: `1px solid ${theme.border}` }}>
                         <td style={{ padding: '8px 14px', fontWeight: '800', fontSize: '12px', color: '#334155' }}>Less: VAT Collected by Platforms</td>
-                        <td colSpan={isComb ? 2 : 6}></td>
+                        <td colSpan={isComb ? 2 : 4}></td>
                       </tr>
                       {pnlData.vdData.arr.map((r, i) => (
                         <tr key={`vat-plat-${i}`} style={{ borderBottom: `1px solid ${theme.border}`, background: '#fff' }}>
                           <td style={{ padding: '8px 14px 8px 32px', fontWeight: '600', fontSize: '12px', color: '#475569' }}>  - {r.Account}</td>
                           {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px', color: '#dc2626' }}>{fmtCol(r.cash)}</td>}
-                          {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px', color: '#dc2626' }}>{fmtCol(r.memon)}</td>}
-                          {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px', color: '#dc2626' }}>{fmtCol(r.khanani)}</td>}
                           {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px', color: '#dc2626' }}>{fmtCol(r.lk)}</td>}
                           <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '700', fontSize: '12px', color: '#dc2626' }}>{fmtCol(r.total)}</td>
                           <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '600', fontSize: '12px' }}>{calcRatio(r.total, uiRatioBase)}</td>
@@ -1206,8 +1175,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       <tr style={{ borderBottom: `1px solid ${theme.border}`, background: '#f8fafc' }}>
                         <td style={{ padding: '8px 14px 8px 14px', fontWeight: '800', fontSize: '12px', color: '#0f172a' }}>Total VAT Collected by Platforms</td>
                         {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vdData.totals.cash)}</td>}
-                        {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vdData.totals.memon)}</td>}
-                        {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vdData.totals.khanani)}</td>}
                         {!isComb && <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vdData.totals.lk)}</td>}
                         <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px', color: '#dc2626' }}>{fmtCol(pnlData.vdData.totals.total)}</td>
                         <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: '800', fontSize: '12px' }}>{calcRatio(pnlData.vdData.totals.total, uiRatioBase)}</td>
@@ -1216,8 +1183,6 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                       <tr style={{ background: '#fef9c3', borderTop: `1px solid ${theme.border}`, borderBottom: `2px solid ${theme.border}` }}>
                         <td style={{ padding: '10px 14px', fontWeight: '900', fontSize: '12px', color: '#000' }}>NET VAT AMOUNT</td>
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(pnlData.netVatAmountCols.cash)}</td>}
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(pnlData.netVatAmountCols.memon)}</td>}
-                        {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(pnlData.netVatAmountCols.khanani)}</td>}
                         {!isComb && <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(pnlData.netVatAmountCols.lk)}</td>}
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{fmtCol(pnlData.netVatAmountCols.total)}</td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', fontSize: '12px', color: '#000' }}>{calcRatio(pnlData.netVatAmountCols.total, uiRatioBase)}</td>
