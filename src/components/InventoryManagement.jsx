@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase'; 
-import { collection, addDoc, getDocs, doc, deleteDoc, writeBatch } from "firebase/firestore";
-import { PackageOpen, PlusCircle, LayoutDashboard, Trash2, Save, ShoppingCart, XCircle, ClipboardList, ChefHat, Edit3 } from 'lucide-react';
+import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { PackageOpen, PlusCircle, LayoutDashboard, Trash2, Save, ShoppingCart, XCircle, ClipboardList, ChefHat, Edit3, Edit } from 'lucide-react';
 
 const getToday = () => {
   const d = new Date();
@@ -28,9 +28,10 @@ export default function InventoryManagement() {
   const [accountsDb, setAccountsDb] = useState([]);
   const [salesDb, setSalesDb] = useState([]);
   
-  // Modals
+  // Modals & Edit States
   const [showItemModal, setShowItemModal] = useState(false);
   const [pendingLineIndex, setPendingLineIndex] = useState(null);
+  const [editItemId, setEditItemId] = useState(null);
   const [newItem, setNewItem] = useState({ name: '', category: 'Food', type: 'Recipe Stock', unit: 'kg' });
 
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -81,6 +82,7 @@ export default function InventoryManagement() {
   // --- LIVE DASHBOARD CALCULATIONS (AVERAGE COSTING ENGINE) ---
   const currentRawStock = useMemo(() => {
     const stockMap = {};
+    // Only map Recipe Stock for the physical dashboard
     itemsDb.filter(i => i.type === 'Recipe Stock').forEach(item => {
       stockMap[item.id] = { ...item, totalQty: 0, totalValue: 0, avgUnitCost: 0 };
     });
@@ -149,32 +151,53 @@ export default function InventoryManagement() {
             date: rec.date,
             supplier: rec.supplier,
             invoiceRef: rec.invoiceRef,
+            totalNet: 0,
             lines: []
           };
         }
         map[rec.masterInvoiceId].lines.push(rec);
+        map[rec.masterInvoiceId].totalNet += (Number(rec.qty) * Number(rec.unitCost));
       }
     });
     return Object.values(map).sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [stockReceiptsDb]);
 
-  // --- MODAL HANDLERS ---
+  // --- MODAL & ITEM HANDLERS ---
+  const handleEditItemClick = (item) => {
+    setNewItem({ name: item.name, category: item.category, type: item.type || 'Recipe Stock', unit: item.unit });
+    setEditItemId(item.id);
+    setActiveTab('setup');
+  };
+
+  const handleCancelEditItem = () => {
+    setNewItem({ name: '', category: 'Food', type: 'Recipe Stock', unit: 'kg' });
+    setEditItemId(null);
+  };
+
   const handleSaveItem = async (e) => {
     e.preventDefault();
     if (!newItem.name.trim() || !newItem.unit.trim()) return;
     const record = { ...newItem, name: newItem.name.trim(), unit: newItem.unit.trim() };
+    
     try {
-      const docRef = await addDoc(collection(db, "erp_ingredients"), record);
-      const addedItem = { id: docRef.id, ...record };
-      setItemsDb(prev => [...prev, addedItem].sort((a,b) => a.name.localeCompare(b.name)));
-      if (pendingLineIndex !== null) {
-        if (activeTab === 'receive') handleReceiveLineChange(pendingLineIndex, 'itemId', docRef.id);
-        if (activeTab === 'recipes') handleRecipeLineChange(pendingLineIndex, 'itemId', docRef.id);
+      if (editItemId) {
+        await updateDoc(doc(db, "erp_ingredients", editItemId), record);
+        setItemsDb(prev => prev.map(i => i.id === editItemId ? { id: editItemId, ...record } : i));
+        alert("✅ Item Updated!");
+      } else {
+        const docRef = await addDoc(collection(db, "erp_ingredients"), record);
+        const addedItem = { id: docRef.id, ...record };
+        setItemsDb(prev => [...prev, addedItem].sort((a,b) => a.name.localeCompare(b.name)));
+        if (pendingLineIndex !== null) {
+          if (activeTab === 'receive') handleReceiveLineChange(pendingLineIndex, 'itemId', docRef.id);
+          if (activeTab === 'recipes') handleRecipeLineChange(pendingLineIndex, 'itemId', docRef.id);
+        }
+        if (activeTab === 'setup') alert("✅ Item Added!");
       }
       setNewItem({ name: '', category: 'Food', type: 'Recipe Stock', unit: 'kg' });
       setShowItemModal(false);
       setPendingLineIndex(null);
-      if (activeTab === 'setup') alert("✅ Item Added!");
+      setEditItemId(null);
     } catch (err) { alert("Error saving item."); }
   };
 
@@ -192,7 +215,7 @@ export default function InventoryManagement() {
   };
 
   const handleDeleteItem = async (id) => {
-    if (!window.confirm("Delete this item?")) return;
+    if (!window.confirm("Delete this item? Warning: Doing this may break past invoices.")) return;
     try {
       await deleteDoc(doc(db, "erp_ingredients", id));
       setItemsDb(prev => prev.filter(i => i.id !== id));
@@ -218,7 +241,7 @@ export default function InventoryManagement() {
     if (!receiveForm.supplier.trim()) return alert("Supplier Name is required.");
     
     const cleanLines = receiveForm.lines.filter(l => l.itemId && Number(l.qty) > 0 && Number(l.rate) >= 0);
-    if (cleanLines.length === 0) return alert("Please add at least one valid item.");
+    if (cleanLines.length === 0) return alert("Please add at least one valid item with a quantity greater than zero.");
 
     const totalVat = Number(receiveForm.totalVat) || 0;
     const totalNet = formSubtotal;
@@ -231,7 +254,6 @@ export default function InventoryManagement() {
     
     const masterInvoiceId = receiveForm.masterInvoiceId || ("INV-STK-" + Date.now().toString());
 
-    // If editing via Void & Reload, soft-delete/void old records
     if (receiveForm.masterInvoiceId) {
       const oldRecords = stockReceiptsDb.filter(r => r.masterInvoiceId === receiveForm.masterInvoiceId);
       oldRecords.forEach(oldRec => {
@@ -257,7 +279,7 @@ export default function InventoryManagement() {
         supplier: receiveForm.supplier.trim(),
         invoiceRef: receiveForm.invoiceRef,
         itemId: line.itemId,
-        qty: itemType === 'Recipe Stock' ? Number(line.qty) : 0, // Direct expenses don't hit physical fridge stock
+        qty: Number(line.qty), // FIX: Always save actual qty so the invoice remains intact
         totalCost: lineNet,
         unitCost: Number(line.rate),
         isDirectExpense: itemType === 'Direct Expense',
@@ -275,10 +297,7 @@ export default function InventoryManagement() {
 
     try {
       await batch.commit();
-      
-      // Clean state update removing voided items and adding new ones
       setStockReceiptsDb(prev => [...prev.filter(r => r.masterInvoiceId !== masterInvoiceId), ...newStockRecords]);
-      
       alert("✅ Invoice Processed Successfully!");
       setReceiveForm({ date: getToday(), supplier: '', invoiceRef: '', totalVat: '', lines: [{ id: Date.now(), itemId: '', qty: '', rate: '' }] });
       setActiveTab('dashboard');
@@ -286,15 +305,17 @@ export default function InventoryManagement() {
   };
 
   const handleEditInvoice = (inv) => {
+    // FIX: Correctly populate the form lines, even for expenses
     setReceiveForm({
       date: inv.date,
       supplier: inv.supplier,
       invoiceRef: inv.invoiceRef,
-      totalVat: inv.lines.reduce((s, l) => s + (l.totalVat || 0), ''), // simplified reload
+      totalVat: '', // VAT needs manual checking during reload
       masterInvoiceId: inv.masterInvoiceId,
       lines: inv.lines.map(l => ({ id: l.id, itemId: l.itemId, qty: l.qty === 0 ? '' : l.qty, rate: l.unitCost }))
     });
     setActiveTab('receive');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDeleteInvoice = async (masterInvoiceId) => {
@@ -668,17 +689,19 @@ export default function InventoryManagement() {
                     <th style={{ padding: '10px 16px' }}>Date</th>
                     <th style={{ padding: '10px 16px' }}>Supplier</th>
                     <th style={{ padding: '10px 16px' }}>Ref</th>
+                    <th style={{ padding: '10px 16px', textAlign: 'right' }}>Total (Net) £</th>
                     <th style={{ padding: '10px 16px' }}>Items Included</th>
                     <th style={{ padding: '10px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {masterInvoicesList.length === 0 ? <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No invoices posted yet.</td></tr> :
+                  {masterInvoicesList.length === 0 ? <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No invoices posted yet.</td></tr> :
                   masterInvoicesList.slice(0, 10).map(inv => (
                     <tr key={inv.masterInvoiceId} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
                       <td style={{ padding: '10px 16px', fontSize: '13px' }}>{inv.date}</td>
                       <td style={{ padding: '10px 16px', fontWeight: '700', fontSize: '13px' }}>{inv.supplier}</td>
                       <td style={{ padding: '10px 16px', fontSize: '13px' }}>{inv.invoiceRef || '-'}</td>
+                      <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: '800', fontSize: '13px', color: '#0369a1' }}>£ {fmtMoney(inv.totalNet)}</td>
                       <td style={{ padding: '10px 16px', fontSize: '12px', color: '#4b5563' }}>
                         {inv.lines.map(l => {
                           const itm = itemsDb.find(i => i.id === l.itemId);
@@ -835,7 +858,9 @@ export default function InventoryManagement() {
         {activeTab === 'setup' && (
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 350px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
-              <div style={{ background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, padding: '12px 16px', fontWeight: '700', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>Add New Item / Expense</div>
+              <div style={{ background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, padding: '12px 16px', fontWeight: '700', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                {editItemId ? '✏️ Edit Item / Expense' : '➕ Add New Item / Expense'}
+              </div>
               <form onSubmit={handleSaveItem} style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Item Name</label>
@@ -864,7 +889,14 @@ export default function InventoryManagement() {
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Unit of Measure (UOM)</label>
                   <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} placeholder="kg, L, boxes, pcs" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required />
                 </div>
-                <button type="submit" style={{ marginTop: '8px', padding: '10px', background: sheetTheme.headerPurpleText, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer' }}>Save to Master List</button>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  {editItemId && (
+                    <button type="button" onClick={handleCancelEditItem} style={{ flex: 1, padding: '10px', background: '#cbd5e1', color: '#1e293b', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
+                  )}
+                  <button type="submit" style={{ flex: 2, padding: '10px', background: sheetTheme.headerPurpleText, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer' }}>
+                    {editItemId ? 'Update Item' : 'Save to Master List'}
+                  </button>
+                </div>
               </form>
             </div>
 
@@ -877,7 +909,7 @@ export default function InventoryManagement() {
                     <th style={{ padding: '8px 16px' }}>Type</th>
                     <th style={{ padding: '8px 16px' }}>Category</th>
                     <th style={{ padding: '8px 16px' }}>UOM</th>
-                    <th style={{ padding: '8px 16px', textAlign: 'center' }}>Action</th>
+                    <th style={{ padding: '8px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -887,8 +919,9 @@ export default function InventoryManagement() {
                       <td style={{ padding: '8px 16px', fontSize: '12px', fontWeight: '700', color: item.type === 'Direct Expense' ? '#d97706' : '#059669' }}>{item.type || 'Recipe Stock'}</td>
                       <td style={{ padding: '8px 16px', fontSize: '12px', color: '#6b7280' }}>{item.category}</td>
                       <td style={{ padding: '8px 16px', fontSize: '12px', fontWeight: '700' }}>{item.unit}</td>
-                      <td style={{ padding: '8px 16px', textAlign: 'center' }}>
-                        <button onClick={() => handleDeleteItem(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                      <td style={{ padding: '8px 16px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                        <button onClick={() => handleEditItemClick(item)} title="Edit Item" style={{ background: 'none', border: 'none', color: '#0369a1', cursor: 'pointer' }}><Edit size={14} /></button>
+                        <button onClick={() => handleDeleteItem(item.id)} title="Delete Item" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={14} /></button>
                       </td>
                     </tr>
                   ))}
