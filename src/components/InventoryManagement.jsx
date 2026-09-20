@@ -27,6 +27,7 @@ export default function InventoryManagement() {
   const [productionDb, setProductionDb] = useState([]);
   const [accountsDb, setAccountsDb] = useState([]);
   const [salesDb, setSalesDb] = useState([]);
+  const [purchasesDb, setPurchasesDb] = useState([]); // Needed to retrieve past VAT amounts
   
   // Modals & Edit States
   const [showItemModal, setShowItemModal] = useState(false);
@@ -55,13 +56,14 @@ export default function InventoryManagement() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [itemSnap, recSnap, recipeSnap, prodSnap, accSnap, salesSnap] = await Promise.all([
+        const [itemSnap, recSnap, recipeSnap, prodSnap, accSnap, salesSnap, purSnap] = await Promise.all([
           getDocs(collection(db, "erp_ingredients")),
           getDocs(collection(db, "erp_stock_receipts")),
           getDocs(collection(db, "erp_recipes")),
           getDocs(collection(db, "erp_production_logs")),
           getDocs(collection(db, "erp_accounts")),
-          getDocs(collection(db, "erp_sales_db"))
+          getDocs(collection(db, "erp_sales_db")),
+          getDocs(collection(db, "erp_purchases"))
         ]);
         
         setItemsDb(itemSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => a.name.localeCompare(b.name)));
@@ -70,6 +72,7 @@ export default function InventoryManagement() {
         setProductionDb(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         setAccountsDb(accSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         setSalesDb(salesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setPurchasesDb(purSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (err) {
         console.error("Failed to load inventory data", err);
       }
@@ -82,7 +85,9 @@ export default function InventoryManagement() {
   // --- LIVE DASHBOARD CALCULATIONS (AVERAGE COSTING ENGINE) ---
   const currentRawStock = useMemo(() => {
     const stockMap = {};
-    itemsDb.filter(i => i.type === 'Recipe Stock').forEach(item => {
+    
+    // FIX: Ensure older items with NO type are still treated as Recipe Stock
+    itemsDb.filter(i => i.type === 'Recipe Stock' || !i.type).forEach(item => {
       stockMap[item.id] = { ...item, totalQty: 0, totalValue: 0, avgUnitCost: 0 };
     });
 
@@ -144,12 +149,14 @@ export default function InventoryManagement() {
     stockReceiptsDb.forEach(rec => {
       if (rec.masterInvoiceId && !rec.isVoid) {
         if (!map[rec.masterInvoiceId]) {
+          const matchedPurchase = purchasesDb.find(p => p.id === rec.masterInvoiceId);
           map[rec.masterInvoiceId] = {
             masterInvoiceId: rec.masterInvoiceId,
             date: rec.date,
             supplier: rec.supplier,
             invoiceRef: rec.invoiceRef,
             totalNet: 0,
+            totalVat: matchedPurchase ? matchedPurchase.totalVat : '',
             lines: []
           };
         }
@@ -158,7 +165,7 @@ export default function InventoryManagement() {
       }
     });
     return Object.values(map).sort((a,b) => new Date(b.date) - new Date(a.date));
-  }, [stockReceiptsDb]);
+  }, [stockReceiptsDb, purchasesDb]);
 
   // --- REAL-TIME DUPLICATE CHECK LOGIC ---
   const isDuplicateItemName = useMemo(() => {
@@ -181,10 +188,11 @@ export default function InventoryManagement() {
 
   const handleSaveItem = async (e) => {
     e.preventDefault();
-    if (isDuplicateItemName) return; // Hard block just in case
+    if (isDuplicateItemName) return; 
     if (!newItem.name.trim() || !newItem.unit.trim()) return;
 
-    const record = { ...newItem, name: newItem.name.trim(), unit: newItem.unit.trim() };
+    const trimmedName = newItem.name.trim();
+    const record = { ...newItem, name: trimmedName, unit: newItem.unit.trim() };
     
     try {
       if (editItemId) {
@@ -304,7 +312,13 @@ export default function InventoryManagement() {
 
     try {
       await batch.commit();
+      
+      // Update local state cleanly
       setStockReceiptsDb(prev => [...prev.filter(r => r.masterInvoiceId !== masterInvoiceId), ...newStockRecords]);
+      
+      // FIX: Ensure we manually append this to purchasesDb so VAT is available for immediate re-editing
+      setPurchasesDb(prev => [...prev.filter(p => p.id !== masterInvoiceId), purchaseInvoice]);
+
       alert("✅ Invoice Processed Successfully!");
       setReceiveForm({ date: getToday(), supplier: '', invoiceRef: '', totalVat: '', lines: [{ id: Date.now(), itemId: '', qty: '', rate: '' }] });
       setActiveTab('dashboard');
@@ -312,11 +326,12 @@ export default function InventoryManagement() {
   };
 
   const handleEditInvoice = (inv) => {
+    // FIX: Restore VAT exactly as it was by pulling from the matched record
     setReceiveForm({
       date: inv.date,
       supplier: inv.supplier,
       invoiceRef: inv.invoiceRef,
-      totalVat: '', 
+      totalVat: inv.totalVat || '', 
       masterInvoiceId: inv.masterInvoiceId,
       lines: inv.lines.map(l => ({ id: l.id, itemId: l.itemId, qty: l.qty === 0 ? '' : l.qty, rate: l.unitCost }))
     });
@@ -755,7 +770,7 @@ export default function InventoryManagement() {
                                 <td style={{ padding: '6px 16px' }}>
                                     <select value={line.itemId} onChange={e => { if (e.target.value === 'ADD_NEW_ITEM') { setPendingLineIndex(idx); setShowItemModal(true); } else { handleRecipeLineChange(idx, 'itemId', e.target.value); } }} style={{ width: '100%', padding: '6px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required>
                                     <option value="">-- Choose --</option>
-                                    {itemsDb.filter(i => i.type === 'Recipe Stock').map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                    {itemsDb.filter(i => i.type === 'Recipe Stock' || !i.type).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                                     <option value="ADD_NEW_ITEM" style={{ fontWeight: '800', color: '#0369a1' }}>➕ Add New Item...</option>
                                     </select>
                                 </td>
@@ -871,14 +886,14 @@ export default function InventoryManagement() {
               <form onSubmit={handleSaveItem} style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Item Name</label>
-                  <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="e.g. Chicken Breast or Bleach" style={{ width: '100%', padding: '8px', border: `1px solid ${isDuplicateItemName ? '#dc2626' : sheetTheme.border}`, borderRadius: '4px' }} required />
+                  <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${isDuplicateItemName ? '#dc2626' : sheetTheme.border}`, borderRadius: '4px' }} required autoFocus placeholder="e.g. Chicken Breast or Bleach" />
                   {isDuplicateItemName && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', fontWeight: '700' }}>⚠️ An item with this exact name already exists.</div>}
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Classification Type</label>
+                  <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Item Classification Type</label>
                   <select value={newItem.type} onChange={e => setNewItem({...newItem, type: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', fontWeight: '700', color: newItem.type === 'Recipe Stock' ? '#059669' : '#d97706' }}>
-                    <option value="Recipe Stock">Recipe Stock</option>
-                    <option value="Direct Expense">Direct Expense / Consumable</option>
+                    <option value="Recipe Stock">Recipe Stock (Enters Fridge/Kitchen Stock)</option>
+                    <option value="Direct Expense">Direct Expense / Consumable (Bypasses Fridge Stock)</option>
                   </select>
                 </div>
                 <div>
@@ -895,7 +910,7 @@ export default function InventoryManagement() {
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Unit of Measure (UOM)</label>
-                  <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} placeholder="kg, L, boxes, pcs" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required />
+                  <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, bottles, boxes" />
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                   {editItemId && (
