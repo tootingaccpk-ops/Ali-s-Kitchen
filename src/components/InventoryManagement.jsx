@@ -82,13 +82,12 @@ export default function InventoryManagement() {
   // --- LIVE DASHBOARD CALCULATIONS (AVERAGE COSTING ENGINE) ---
   const currentRawStock = useMemo(() => {
     const stockMap = {};
-    // Only map Recipe Stock for the physical dashboard
     itemsDb.filter(i => i.type === 'Recipe Stock').forEach(item => {
       stockMap[item.id] = { ...item, totalQty: 0, totalValue: 0, avgUnitCost: 0 };
     });
 
     stockReceiptsDb.forEach(rec => {
-      if (stockMap[rec.itemId]) {
+      if (!rec.isVoid && stockMap[rec.itemId]) {
         stockMap[rec.itemId].totalQty += Number(rec.qty) || 0;
         stockMap[rec.itemId].totalValue += Number(rec.totalCost) || 0;
       }
@@ -140,7 +139,6 @@ export default function InventoryManagement() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [recipesDb, productionDb, salesDb]);
 
-  // --- UNIQUE MASTER INVOICES LIST FOR VOID/RELOAD ---
   const masterInvoicesList = useMemo(() => {
     const map = {};
     stockReceiptsDb.forEach(rec => {
@@ -162,6 +160,13 @@ export default function InventoryManagement() {
     return Object.values(map).sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [stockReceiptsDb]);
 
+  // --- REAL-TIME DUPLICATE CHECK LOGIC ---
+  const isDuplicateItemName = useMemo(() => {
+    if (!newItem.name || newItem.name.trim() === '') return false;
+    const searchName = newItem.name.trim().toLowerCase();
+    return itemsDb.some(i => i.name.toLowerCase() === searchName && i.id !== editItemId);
+  }, [newItem.name, itemsDb, editItemId]);
+
   // --- MODAL & ITEM HANDLERS ---
   const handleEditItemClick = (item) => {
     setNewItem({ name: item.name, category: item.category, type: item.type || 'Recipe Stock', unit: item.unit });
@@ -176,7 +181,9 @@ export default function InventoryManagement() {
 
   const handleSaveItem = async (e) => {
     e.preventDefault();
+    if (isDuplicateItemName) return; // Hard block just in case
     if (!newItem.name.trim() || !newItem.unit.trim()) return;
+
     const record = { ...newItem, name: newItem.name.trim(), unit: newItem.unit.trim() };
     
     try {
@@ -279,7 +286,7 @@ export default function InventoryManagement() {
         supplier: receiveForm.supplier.trim(),
         invoiceRef: receiveForm.invoiceRef,
         itemId: line.itemId,
-        qty: Number(line.qty), // FIX: Always save actual qty so the invoice remains intact
+        qty: Number(line.qty),
         totalCost: lineNet,
         unitCost: Number(line.rate),
         isDirectExpense: itemType === 'Direct Expense',
@@ -305,12 +312,11 @@ export default function InventoryManagement() {
   };
 
   const handleEditInvoice = (inv) => {
-    // FIX: Correctly populate the form lines, even for expenses
     setReceiveForm({
       date: inv.date,
       supplier: inv.supplier,
       invoiceRef: inv.invoiceRef,
-      totalVat: '', // VAT needs manual checking during reload
+      totalVat: '', 
       masterInvoiceId: inv.masterInvoiceId,
       lines: inv.lines.map(l => ({ id: l.id, itemId: l.itemId, qty: l.qty === 0 ? '' : l.qty, rate: l.unitCost }))
     });
@@ -436,7 +442,7 @@ export default function InventoryManagement() {
   return (
     <div style={{ padding: '24px', fontFamily: sheetTheme.font, background: '#ffffff', minHeight: '100vh', color: '#000' }}>
       
-      {/* INLINE ITEM MODAL */}
+      {/* INLINE ITEM MODAL WITH DUPLICATE CHECK */}
       {showItemModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ background: '#fff', width: '420px', borderRadius: '8px', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
@@ -447,7 +453,8 @@ export default function InventoryManagement() {
             <form onSubmit={handleSaveItem} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Item Name</label>
-                <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required autoFocus placeholder="e.g. Chicken Breast or Bleach" />
+                <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${isDuplicateItemName ? '#dc2626' : sheetTheme.border}`, borderRadius: '4px' }} required autoFocus placeholder="e.g. Chicken Breast or Bleach" />
+                {isDuplicateItemName && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', fontWeight: '700' }}>⚠️ An item with this exact name already exists.</div>}
               </div>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Item Classification Type</label>
@@ -472,7 +479,7 @@ export default function InventoryManagement() {
                 <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Unit of Measure (UOM)</label>
                 <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, bottles, boxes" />
               </div>
-              <button type="submit" style={{ padding: '10px', background: sheetTheme.headerPurpleText, color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', borderRadius: '4px' }}>Save & Select</button>
+              <button type="submit" disabled={isDuplicateItemName} style={{ padding: '10px', background: isDuplicateItemName ? '#94a3b8' : sheetTheme.headerPurpleText, color: '#fff', fontWeight: '700', border: 'none', cursor: isDuplicateItemName ? 'not-allowed' : 'pointer', borderRadius: '4px' }}>Save & Select</button>
             </form>
           </div>
         </div>
@@ -854,7 +861,7 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* TAB 5: SETUP (ITEM MASTER) */}
+        {/* TAB 5: SETUP (ITEM MASTER) WITH REAL-TIME DUPLICATE CHECK */}
         {activeTab === 'setup' && (
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 350px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
@@ -864,7 +871,8 @@ export default function InventoryManagement() {
               <form onSubmit={handleSaveItem} style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Item Name</label>
-                  <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="e.g. Chicken Breast or Bleach" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required />
+                  <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="e.g. Chicken Breast or Bleach" style={{ width: '100%', padding: '8px', border: `1px solid ${isDuplicateItemName ? '#dc2626' : sheetTheme.border}`, borderRadius: '4px' }} required />
+                  {isDuplicateItemName && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', fontWeight: '700' }}>⚠️ An item with this exact name already exists.</div>}
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Classification Type</label>
@@ -893,7 +901,7 @@ export default function InventoryManagement() {
                   {editItemId && (
                     <button type="button" onClick={handleCancelEditItem} style={{ flex: 1, padding: '10px', background: '#cbd5e1', color: '#1e293b', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
                   )}
-                  <button type="submit" style={{ flex: 2, padding: '10px', background: sheetTheme.headerPurpleText, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="submit" disabled={isDuplicateItemName} style={{ flex: 2, padding: '10px', background: isDuplicateItemName ? '#94a3b8' : sheetTheme.headerPurpleText, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: isDuplicateItemName ? 'not-allowed' : 'pointer' }}>
                     {editItemId ? 'Update Item' : 'Save to Master List'}
                   </button>
                 </div>
