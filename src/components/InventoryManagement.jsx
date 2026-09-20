@@ -1,20 +1,27 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase'; 
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch } from "firebase/firestore";
-import { PackageOpen, PlusCircle, LayoutDashboard, Trash2, Save, ShoppingCart, XCircle, ClipboardList, ChefHat, Edit3, Edit } from 'lucide-react';
+import { PackageOpen, PlusCircle, LayoutDashboard, Trash2, Save, ShoppingCart, XCircle, ClipboardList, ChefHat, Edit3, Edit, Download, Printer, BarChart3 } from 'lucide-react';
 
 const getToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+const getFirstDayOfMonth = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+};
+
 const fmtMoney = (n) => Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtQty = (n) => Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = (n) => Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
 
 const sheetTheme = {
   border: '#d1d5db', font: '"Arial", "Calibri", sans-serif', labelBg: '#f8fafc', calcBg: '#f1f5f9',
   headerBlueBg: '#e0f2fe', headerBlueText: '#0369a1', headerGreenBg: '#dcfce7', headerGreenText: '#166534',
-  headerPurpleBg: '#f3e8ff', headerPurpleText: '#7e22ce', headerOrangeBg: '#fff7ed', headerOrangeText: '#c2410c'
+  headerPurpleBg: '#f3e8ff', headerPurpleText: '#7e22ce', headerOrangeBg: '#fff7ed', headerOrangeText: '#c2410c',
+  headerGrayBg: '#f1f5f9', headerGrayText: '#334155'
 };
 
 export default function InventoryManagement() {
@@ -27,7 +34,7 @@ export default function InventoryManagement() {
   const [productionDb, setProductionDb] = useState([]);
   const [accountsDb, setAccountsDb] = useState([]);
   const [salesDb, setSalesDb] = useState([]);
-  const [purchasesDb, setPurchasesDb] = useState([]); // Needed to retrieve past VAT amounts
+  const [purchasesDb, setPurchasesDb] = useState([]);
   
   // Modals & Edit States
   const [showItemModal, setShowItemModal] = useState(false);
@@ -38,7 +45,7 @@ export default function InventoryManagement() {
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [newSupplier, setNewSupplier] = useState('');
   
-  // Forms
+  // Forms & Filters
   const [receiveForm, setReceiveForm] = useState({
     date: getToday(), supplier: '', invoiceRef: '', totalVat: '',
     lines: [{ id: Date.now(), itemId: '', qty: '', rate: '' }]
@@ -50,6 +57,11 @@ export default function InventoryManagement() {
 
   const [productionForm, setProductionForm] = useState({
     date: getToday(), recipeId: '', portionsMade: ''
+  });
+
+  const [reportDates, setReportDates] = useState({
+    startDate: getFirstDayOfMonth(),
+    endDate: getToday()
   });
 
   // Load Data
@@ -82,11 +94,9 @@ export default function InventoryManagement() {
 
   const payableAccounts = useMemo(() => accountsDb.filter(a => String(a.category).toLowerCase().includes('payable') || String(a.category).toLowerCase().includes('supplier')).sort((a,b) => a.name.localeCompare(b.name)), [accountsDb]);
 
-  // --- LIVE DASHBOARD CALCULATIONS (AVERAGE COSTING ENGINE) ---
+  // --- ENGINE: LIVE DASHBOARD & INVENTORY CALCULATIONS ---
   const currentRawStock = useMemo(() => {
     const stockMap = {};
-    
-    // FIX: Ensure older items with NO type are still treated as Recipe Stock
     itemsDb.filter(i => i.type === 'Recipe Stock' || !i.type).forEach(item => {
       stockMap[item.id] = { ...item, totalQty: 0, totalValue: 0, avgUnitCost: 0 };
     });
@@ -144,6 +154,39 @@ export default function InventoryManagement() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [recipesDb, productionDb, salesDb]);
 
+  // --- ENGINE: COGS & PROFIT MARGIN REPORTING ---
+  const dailyReportsData = useMemo(() => {
+    const dailyMap = {};
+    
+    // Create base map of sales by date within range
+    salesDb.forEach(sale => {
+      const sDate = sale.date;
+      if (sDate >= reportDates.startDate && sDate <= reportDates.endDate) {
+        if (!dailyMap[sDate]) {
+          dailyMap[sDate] = { date: sDate, revenue: 0, cogs: 0 };
+        }
+        // Grab net revenue from sales doc (fallback to gross or 0 if custom named)
+        dailyMap[sDate].revenue += Number(sale.totalNet || sale.totalGross || sale.netRevenue || 0);
+
+        // Calculate COGS by matching PMIX portions sold with their actual average cost
+        if (sale.pmix) {
+          sale.pmix.forEach(p => {
+            const recipeStock = currentPreparedStock.find(r => r.id === p.recipeId);
+            if (recipeStock) {
+              dailyMap[sDate].cogs += (Number(p.qtySold) * recipeStock.avgPortionCost);
+            }
+          });
+        }
+      }
+    });
+
+    return Object.values(dailyMap).map(day => {
+      const grossProfit = day.revenue - day.cogs;
+      const foodCostPct = day.revenue > 0 ? (day.cogs / day.revenue) * 100 : 0;
+      return { ...day, grossProfit, foodCostPct };
+    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [salesDb, currentPreparedStock, reportDates]);
+
   const masterInvoicesList = useMemo(() => {
     const map = {};
     stockReceiptsDb.forEach(rec => {
@@ -167,14 +210,67 @@ export default function InventoryManagement() {
     return Object.values(map).sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [stockReceiptsDb, purchasesDb]);
 
-  // --- REAL-TIME DUPLICATE CHECK LOGIC ---
   const isDuplicateItemName = useMemo(() => {
     if (!newItem.name || newItem.name.trim() === '') return false;
     const searchName = newItem.name.trim().toLowerCase();
     return itemsDb.some(i => i.name.toLowerCase() === searchName && i.id !== editItemId);
   }, [newItem.name, itemsDb, editItemId]);
 
-  // --- MODAL & ITEM HANDLERS ---
+  // --- EXPORT FUNCTIONS (CSV & PDF) ---
+  const downloadCSV = (csvContent, filename) => {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    let csvStr = '';
+    let filename = '';
+
+    if (activeTab === 'dashboard' || activeTab === 'reports') {
+      csvStr += `Inventory Valuation Report (${getToday()})\n\n`;
+      csvStr += `Raw Ingredients\nItem Name,Category,Current Qty,Unit,Avg Cost(£),Total Value(£)\n`;
+      currentRawStock.forEach(item => {
+        csvStr += `"${item.name}","${item.category}",${item.totalQty},"${item.unit}",${item.avgUnitCost},${item.totalValue}\n`;
+      });
+      csvStr += `\nPrepared Food Portions\nRecipe Name,Available Portions,Avg Cost/Portion(£),Total Value(£)\n`;
+      currentPreparedStock.filter(i => i.totalPortions !== 0).forEach(item => {
+        csvStr += `"${item.name}",${item.totalPortions},${item.avgPortionCost},${item.totalValue}\n`;
+      });
+
+      if (activeTab === 'reports') {
+        csvStr += `\nDaily Revenue & COGS Report (${reportDates.startDate} to ${reportDates.endDate})\n`;
+        csvStr += `Date,Net Revenue(£),COGS(£),Gross Profit(£),Food Cost(%)\n`;
+        dailyReportsData.forEach(day => {
+          csvStr += `${day.date},${day.revenue},${day.cogs},${day.grossProfit},${day.foodCostPct}\n`;
+        });
+      }
+      filename = `Inventory_Reports_${getToday()}.csv`;
+    } 
+    else if (activeTab === 'setup') {
+      csvStr += `Master Items List\nName,Type,Category,UOM\n`;
+      itemsDb.forEach(item => csvStr += `"${item.name}","${item.type || 'Recipe Stock'}","${item.category}","${item.unit}"\n`);
+      filename = `Master_Items_${getToday()}.csv`;
+    }
+    else {
+      csvStr += `Recent Data\nNo specific export defined for this tab yet.\n`;
+      filename = `Export_${getToday()}.csv`;
+    }
+
+    downloadCSV(csvStr, filename);
+  };
+
+  const handlePrintPDF = () => {
+    window.print();
+  };
+
+  // --- CRUD HANDLERS ---
   const handleEditItemClick = (item) => {
     setNewItem({ name: item.name, category: item.category, type: item.type || 'Recipe Stock', unit: item.unit });
     setEditItemId(item.id);
@@ -237,7 +333,6 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error deleting item."); }
   };
 
-  // --- TAB: STOCK RECEIVING (WITH MIXED ITEM ROUTING & VOID/RELOAD EDIT) ---
   const handleReceiveLineChange = (index, field, value) => {
     setReceiveForm(prev => {
       const newLines = [...prev.lines];
@@ -271,9 +366,7 @@ export default function InventoryManagement() {
 
     if (receiveForm.masterInvoiceId) {
       const oldRecords = stockReceiptsDb.filter(r => r.masterInvoiceId === receiveForm.masterInvoiceId);
-      oldRecords.forEach(oldRec => {
-        batch.update(doc(db, "erp_stock_receipts", oldRec.id), { isVoid: true });
-      });
+      oldRecords.forEach(oldRec => { batch.update(doc(db, "erp_stock_receipts", oldRec.id), { isVoid: true }); });
     }
     
     cleanLines.forEach((line, index) => {
@@ -288,17 +381,7 @@ export default function InventoryManagement() {
 
       const stockId = Date.now().toString() + Math.random().toString(36).substring(7);
       const stockRecord = {
-        id: stockId,
-        masterInvoiceId: masterInvoiceId,
-        date: receiveForm.date,
-        supplier: receiveForm.supplier.trim(),
-        invoiceRef: receiveForm.invoiceRef,
-        itemId: line.itemId,
-        qty: Number(line.qty),
-        totalCost: lineNet,
-        unitCost: Number(line.rate),
-        isDirectExpense: itemType === 'Direct Expense',
-        isVoid: false
+        id: stockId, masterInvoiceId: masterInvoiceId, date: receiveForm.date, supplier: receiveForm.supplier.trim(), invoiceRef: receiveForm.invoiceRef, itemId: line.itemId, qty: Number(line.qty), totalCost: lineNet, unitCost: Number(line.rate), isDirectExpense: itemType === 'Direct Expense', isVoid: false
       };
       batch.set(doc(db, "erp_stock_receipts", stockId), stockRecord);
       newStockRecords.push(stockRecord);
@@ -312,13 +395,8 @@ export default function InventoryManagement() {
 
     try {
       await batch.commit();
-      
-      // Update local state cleanly
       setStockReceiptsDb(prev => [...prev.filter(r => r.masterInvoiceId !== masterInvoiceId), ...newStockRecords]);
-      
-      // FIX: Ensure we manually append this to purchasesDb so VAT is available for immediate re-editing
       setPurchasesDb(prev => [...prev.filter(p => p.id !== masterInvoiceId), purchaseInvoice]);
-
       alert("✅ Invoice Processed Successfully!");
       setReceiveForm({ date: getToday(), supplier: '', invoiceRef: '', totalVat: '', lines: [{ id: Date.now(), itemId: '', qty: '', rate: '' }] });
       setActiveTab('dashboard');
@@ -326,13 +404,8 @@ export default function InventoryManagement() {
   };
 
   const handleEditInvoice = (inv) => {
-    // FIX: Restore VAT exactly as it was by pulling from the matched record
     setReceiveForm({
-      date: inv.date,
-      supplier: inv.supplier,
-      invoiceRef: inv.invoiceRef,
-      totalVat: inv.totalVat || '', 
-      masterInvoiceId: inv.masterInvoiceId,
+      date: inv.date, supplier: inv.supplier, invoiceRef: inv.invoiceRef, totalVat: inv.totalVat || '', masterInvoiceId: inv.masterInvoiceId,
       lines: inv.lines.map(l => ({ id: l.id, itemId: l.itemId, qty: l.qty === 0 ? '' : l.qty, rate: l.unitCost }))
     });
     setActiveTab('receive');
@@ -343,9 +416,7 @@ export default function InventoryManagement() {
     if (!window.confirm("Void and delete this entire invoice?")) return;
     const batch = writeBatch(db);
     const targetRecords = stockReceiptsDb.filter(r => r.masterInvoiceId === masterInvoiceId);
-    targetRecords.forEach(rec => {
-      batch.update(doc(db, "erp_stock_receipts", rec.id), { isVoid: true });
-    });
+    targetRecords.forEach(rec => { batch.update(doc(db, "erp_stock_receipts", rec.id), { isVoid: true }); });
     try {
       await batch.commit();
       setStockReceiptsDb(prev => prev.map(r => r.masterInvoiceId === masterInvoiceId ? { ...r, isVoid: true } : r));
@@ -353,11 +424,9 @@ export default function InventoryManagement() {
     } catch(e) { alert("Error voiding invoice."); }
   };
 
-  // --- TAB: RECIPE MASTER ---
   const handleRecipeLineChange = (index, field, value) => {
     setRecipeForm(prev => { const newLines = [...prev.lines]; newLines[index] = { ...newLines[index], [field]: value }; return { ...prev, lines: newLines }; });
   };
-
   const addRecipeLine = () => { setRecipeForm(prev => ({ ...prev, lines: [...prev.lines, { id: Date.now(), itemId: '', qty: '' }] })); };
   const removeRecipeLine = (index) => { setRecipeForm(prev => { const newLines = [...prev.lines]; newLines.splice(index, 1); if (newLines.length === 0) newLines.push({ id: Date.now(), itemId: '', qty: '' }); return { ...prev, lines: newLines }; }); };
 
@@ -367,11 +436,7 @@ export default function InventoryManagement() {
     const cleanLines = recipeForm.lines.filter(l => l.itemId && Number(l.qty) > 0);
     if (cleanLines.length === 0) return alert("Please add at least one item to the template.");
 
-    const newRecipe = {
-      name: recipeForm.name.trim(),
-      ingredients: cleanLines.map(l => ({ itemId: l.itemId, qty: Number(l.qty) }))
-    };
-
+    const newRecipe = { name: recipeForm.name.trim(), ingredients: cleanLines.map(l => ({ itemId: l.itemId, qty: Number(l.qty) })) };
     try {
       const docRef = await addDoc(collection(db, "erp_recipes"), newRecipe);
       setRecipesDb(prev => [...prev, { id: docRef.id, ...newRecipe }].sort((a,b) => a.name.localeCompare(b.name)));
@@ -388,7 +453,6 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error deleting recipe."); }
   };
 
-  // --- TAB: KITCHEN PRODUCTION ---
   const handleSaveProduction = async (e) => {
     e.preventDefault();
     if (!productionForm.recipeId || !productionForm.portionsMade) return;
@@ -404,41 +468,19 @@ export default function InventoryManagement() {
       const avgCost = rawCostMap[ing.itemId] || 0;
       const costForIng = ing.qty * avgCost;
       totalBatchCost += costForIng;
-      
-      rawDeductions.push({
-        itemId: ing.itemId,
-        qty: -ing.qty,
-        totalCost: -costForIng,
-        unitCost: avgCost
-      });
+      rawDeductions.push({ itemId: ing.itemId, qty: -ing.qty, totalCost: -costForIng, unitCost: avgCost });
     });
 
     const prodId = "PROD-" + Date.now();
     const batch = writeBatch(db);
 
-    const prodRecord = {
-      id: prodId,
-      date: productionForm.date,
-      recipeId: productionForm.recipeId,
-      portionsMade: portions,
-      totalBatchCost: totalBatchCost
-    };
+    const prodRecord = { id: prodId, date: productionForm.date, recipeId: productionForm.recipeId, portionsMade: portions, totalBatchCost: totalBatchCost };
     batch.set(doc(db, "erp_production_logs", prodId), prodRecord);
 
     rawDeductions.forEach((deduction, idx) => {
       const stockId = `DED-${prodId}-${idx}`;
       batch.set(doc(db, "erp_stock_receipts", stockId), {
-        id: stockId,
-        date: productionForm.date,
-        supplier: 'Kitchen Production',
-        invoiceRef: `Batch-${prodId}`,
-        itemId: deduction.itemId,
-        qty: deduction.qty,
-        totalCost: deduction.totalCost,
-        unitCost: deduction.unitCost,
-        isProductionDeduction: true,
-        productionId: prodId,
-        isVoid: false
+        id: stockId, date: productionForm.date, supplier: 'Kitchen Production', invoiceRef: `Batch-${prodId}`, itemId: deduction.itemId, qty: deduction.qty, totalCost: deduction.totalCost, unitCost: deduction.unitCost, isProductionDeduction: true, productionId: prodId, isVoid: false
       });
     });
 
@@ -457,9 +499,17 @@ export default function InventoryManagement() {
   return (
     <div style={{ padding: '24px', fontFamily: sheetTheme.font, background: '#ffffff', minHeight: '100vh', color: '#000' }}>
       
-      {/* INLINE ITEM MODAL WITH DUPLICATE CHECK */}
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          .print-full-width { width: 100% !important; margin: 0 !important; padding: 0 !important; border: none !important; }
+          body { background: #fff !important; margin: 0; padding: 10px; }
+        }
+      `}</style>
+
+      {/* INLINE MODALS */}
       {showItemModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ background: '#fff', width: '420px', borderRadius: '8px', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
             <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Item / Expense</h2>
@@ -472,27 +522,15 @@ export default function InventoryManagement() {
                 {isDuplicateItemName && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', fontWeight: '700' }}>⚠️ An item with this exact name already exists.</div>}
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Item Classification Type</label>
+                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Classification Type</label>
                 <select value={newItem.type} onChange={e => setNewItem({...newItem, type: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', fontWeight: '700', color: newItem.type === 'Recipe Stock' ? '#059669' : '#d97706' }}>
                   <option value="Recipe Stock">Recipe Stock (Enters Fridge/Kitchen Stock)</option>
                   <option value="Direct Expense">Direct Expense / Consumable (Bypasses Fridge Stock)</option>
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Category</label>
-                <select value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }}>
-                  <option value="Meat & Poultry">Meat & Poultry</option>
-                  <option value="Produce / Veg">Produce / Veg</option>
-                  <option value="Dairy">Dairy</option>
-                  <option value="Dry Goods / Spices">Dry Goods / Spices</option>
-                  <option value="Packaging & Consumables">Packaging & Consumables</option>
-                  <option value="Cleaning & Chemicals">Cleaning & Chemicals</option>
-                  <option value="Beverages">Beverages</option>
-                </select>
-              </div>
-              <div>
                 <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Unit of Measure (UOM)</label>
-                <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, bottles, boxes" />
+                <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, bottles" />
               </div>
               <button type="submit" disabled={isDuplicateItemName} style={{ padding: '10px', background: isDuplicateItemName ? '#94a3b8' : sheetTheme.headerPurpleText, color: '#fff', fontWeight: '700', border: 'none', cursor: isDuplicateItemName ? 'not-allowed' : 'pointer', borderRadius: '4px' }}>Save & Select</button>
             </form>
@@ -500,40 +538,49 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {/* SUPPLIER MODAL */}
       {showSupplierModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <div style={{ background: '#fff', width: '400px', borderRadius: '8px', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}`, background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.7)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ background: '#fff', width: '400px', borderRadius: '8px', border: `1px solid ${sheetTheme.border}`, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>➕ Add New Supplier</h2>
               <button onClick={() => { setShowSupplierModal(false); setNewSupplier(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: sheetTheme.headerBlueText }}><XCircle size={18} /></button>
             </div>
             <form onSubmit={handleSaveSupplier} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Supplier / Vendor Name</label>
-                <input type="text" value={newSupplier} onChange={e => setNewSupplier(e.target.value)} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required autoFocus placeholder="e.g. Booker Wholesale" />
+                <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Supplier Name</label>
+                <input type="text" value={newSupplier} onChange={e => setNewSupplier(e.target.value)} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required autoFocus />
               </div>
-              <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', cursor: 'pointer', borderRadius: '4px' }}>Save to Chart of Accounts</button>
+              <button type="submit" style={{ padding: '10px', background: '#0369a1', color: '#fff', fontWeight: '700', border: 'none', borderRadius: '4px' }}>Save to Chart of Accounts</button>
             </form>
           </div>
         </div>
       )}
 
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+      <div className="print-full-width" style={{ maxWidth: '1200px', margin: '0 auto' }}>
         
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '12px', marginBottom: '16px' }}>
+        {/* HEADER WITH EXPORT BUTTONS */}
+        <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '12px', marginBottom: '16px' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'normal', color: '#1f2937' }}>Inventory & Kitchen Production</h1>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>Track raw materials, template recipes, mixed invoices, and kitchen batches.</p>
+            <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'normal', color: '#1f2937' }}>Inventory, Production & Analytics</h1>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>Track raw materials, log batches, and analyze COGS.</p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleExportExcel} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+              <Download size={16} /> Excel (CSV)
+            </button>
+            <button onClick={handlePrintPDF} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+              <Printer size={16} /> PDF / Print
+            </button>
           </div>
         </div>
 
         {/* NAVIGATION TABS */}
-        <div style={{ display: 'flex', border: `1px solid ${sheetTheme.border}`, marginBottom: '24px', flexWrap: 'wrap', borderRadius: '6px', overflow: 'hidden' }}>
+        <div className="no-print" style={{ display: 'flex', border: `1px solid ${sheetTheme.border}`, marginBottom: '24px', flexWrap: 'wrap', borderRadius: '6px', overflow: 'hidden' }}>
           <button onClick={() => setActiveTab('dashboard')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'dashboard' ? sheetTheme.headerBlueBg : '#fff', color: activeTab === 'dashboard' ? sheetTheme.headerBlueText : '#6b7280', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><LayoutDashboard size={16} /> LIVE DASHBOARD</button>
           <button onClick={() => setActiveTab('receive')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'receive' ? sheetTheme.headerGreenBg : '#fff', color: activeTab === 'receive' ? sheetTheme.headerGreenText : '#6b7280', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><ShoppingCart size={16} /> RECEIVE INVOICE</button>
           <button onClick={() => setActiveTab('recipes')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'recipes' ? sheetTheme.headerOrangeBg : '#fff', color: activeTab === 'recipes' ? sheetTheme.headerOrangeText : '#6b7280', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><ClipboardList size={16} /> RECIPE MASTER</button>
           <button onClick={() => setActiveTab('production')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'production' ? '#fef3c7' : '#fff', color: activeTab === 'production' ? '#b45309' : '#6b7280', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><ChefHat size={16} /> LOG PRODUCTION</button>
+          <button onClick={() => setActiveTab('reports')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'reports' ? '#e0e7ff' : '#fff', color: activeTab === 'reports' ? '#4f46e5' : '#6b7280', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><BarChart3 size={16} /> REPORTS</button>
           <button onClick={() => setActiveTab('setup')} style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'setup' ? sheetTheme.headerPurpleBg : '#fff', color: activeTab === 'setup' ? sheetTheme.headerPurpleText : '#6b7280', border: 'none', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><PackageOpen size={16} /> ITEM MASTER</button>
         </div>
 
@@ -584,7 +631,7 @@ export default function InventoryManagement() {
                 </thead>
                 <tbody>
                     {currentPreparedStock.filter(item => item.totalPortions !== 0).length === 0 ? (
-                    <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No prepared food available. Use the Production tab to cook batches.</td></tr>
+                    <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No prepared food available.</td></tr>
                     ) : (
                     currentPreparedStock.filter(item => item.totalPortions !== 0).map(item => (
                         <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
@@ -598,14 +645,80 @@ export default function InventoryManagement() {
                 </tbody>
                 </table>
             </div>
+          </div>
+        )}
+
+        {/* TAB: REPORTS & ANALYTICS */}
+        {activeTab === 'reports' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            
+            <div className="no-print" style={{ display: 'flex', gap: '16px', background: '#f8fafc', padding: '16px', borderRadius: '8px', border: `1px solid ${sheetTheme.border}` }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '4px' }}>Start Date</label>
+                <input type="date" value={reportDates.startDate} onChange={e => setReportDates({...reportDates, startDate: e.target.value})} style={{ padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '4px' }}>End Date</label>
+                <input type="date" value={reportDates.endDate} onChange={e => setReportDates({...reportDates, endDate: e.target.value})} style={{ padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
+              </div>
+            </div>
+
+            <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
+              <div style={{ background: '#e0e7ff', color: '#3730a3', padding: '16px', fontWeight: '800', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                Daily Revenue vs. Cost of Goods Sold (COGS)
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead style={{ fontSize: '11px', color: '#4b5563', textTransform: 'uppercase', background: '#f8fafc' }}>
+                  <tr>
+                    <th style={{ padding: '12px 16px', borderBottom: `1px solid ${sheetTheme.border}` }}>Date</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>Net Revenue (£)</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>COGS (Food Cost £)</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>Gross Profit (£)</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>Food Cost %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyReportsData.length === 0 ? (
+                    <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No sales data logged in this date range.</td></tr>
+                  ) : (
+                    dailyReportsData.map((day, idx) => (
+                      <tr key={idx} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
+                        <td style={{ padding: '12px 16px', fontWeight: '700', fontSize: '13px' }}>{day.date}</td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: '700', fontSize: '13px', color: '#059669' }}>£ {fmtMoney(day.revenue)}</td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: '13px', color: '#dc2626' }}>£ {fmtMoney(day.cogs)}</td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#0369a1' }}>£ {fmtMoney(day.grossProfit)}</td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: day.foodCostPct > 35 ? '#dc2626' : '#059669' }}>{fmtPct(day.foodCostPct)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 300px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', padding: '20px', background: '#f0fdf4' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#166534', textTransform: 'uppercase' }}>Total Raw Material Value</div>
+                <div style={{ fontSize: '28px', fontWeight: '900', color: '#14532d', marginTop: '8px' }}>
+                  £ {fmtMoney(currentRawStock.reduce((sum, item) => sum + item.totalValue, 0))}
+                </div>
+                <div style={{ fontSize: '11px', color: '#166534', marginTop: '4px' }}>Value of physical stock in Cold Room / Dry Store</div>
+              </div>
+              <div style={{ flex: '1 1 300px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', padding: '20px', background: '#eff6ff' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#1e40af', textTransform: 'uppercase' }}>Total Prepared Food Value</div>
+                <div style={{ fontSize: '28px', fontWeight: '900', color: '#1e3a8a', marginTop: '8px' }}>
+                  £ {fmtMoney(currentPreparedStock.filter(i => i.totalPortions > 0).reduce((sum, item) => sum + item.totalValue, 0))}
+                </div>
+                <div style={{ fontSize: '11px', color: '#1e40af', marginTop: '4px' }}>Value of finished batches in Fridge / Freezer</div>
+              </div>
+            </div>
 
           </div>
         )}
 
-        {/* TAB 2: RECEIVE INVOICE (WITH VOID/RELOAD HISTORY) */}
+        {/* TAB 2: RECEIVE INVOICE */}
         {activeTab === 'receive' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-            <form onSubmit={handleSaveReceipt} style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+            <form onSubmit={handleSaveReceipt} className="no-print" style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
               <div style={{ padding: '16px', background: sheetTheme.headerGreenBg, borderBottom: `1px solid ${sheetTheme.border}` }}>
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: '200px' }}>
@@ -614,15 +727,7 @@ export default function InventoryManagement() {
                   </div>
                   <div style={{ flex: 2, minWidth: '300px' }}>
                     <label style={{ fontSize: '12px', fontWeight: '700', color: sheetTheme.headerGreenText, display: 'block', marginBottom: '4px' }}>Supplier (Chart of Accounts)</label>
-                    <select 
-                      value={receiveForm.supplier} 
-                      onChange={e => {
-                        if (e.target.value === 'ADD_NEW_SUPPLIER') setShowSupplierModal(true);
-                        else setReceiveForm({...receiveForm, supplier: e.target.value});
-                      }}
-                      style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} 
-                      required
-                    >
+                    <select value={receiveForm.supplier} onChange={e => { if (e.target.value === 'ADD_NEW_SUPPLIER') setShowSupplierModal(true); else setReceiveForm({...receiveForm, supplier: e.target.value}); }} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required>
                       <option value="">-- Select Supplier --</option>
                       {payableAccounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
                       <option value="ADD_NEW_SUPPLIER" style={{ fontWeight: '800', color: '#0369a1' }}>➕ Add New Supplier...</option>
@@ -702,7 +807,6 @@ export default function InventoryManagement() {
               </div>
             </form>
 
-            {/* RECENT INVOICES HISTORY (FOR VOID & RELOAD) */}
             <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
               <div style={{ background: '#f8fafc', padding: '16px', fontWeight: '800', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>Recent Posted Invoices (Edit via Void & Reload or Delete)</div>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
@@ -713,7 +817,7 @@ export default function InventoryManagement() {
                     <th style={{ padding: '10px 16px' }}>Ref</th>
                     <th style={{ padding: '10px 16px', textAlign: 'right' }}>Total (Net) £</th>
                     <th style={{ padding: '10px 16px' }}>Items Included</th>
-                    <th style={{ padding: '10px 16px', textAlign: 'center' }}>Actions</th>
+                    <th className="no-print" style={{ padding: '10px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -730,7 +834,7 @@ export default function InventoryManagement() {
                           return itm ? `${l.qty} ${itm.unit} ${itm.name}` : '';
                         }).filter(Boolean).join(' • ')}
                       </td>
-                      <td style={{ padding: '10px 16px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                      <td className="no-print" style={{ padding: '10px 16px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px' }}>
                         <button onClick={() => handleEditInvoice(inv)} title="Edit (Void & Reload)" style={{ background: 'none', border: 'none', color: '#0369a1', cursor: 'pointer' }}><Edit3 size={16} /></button>
                         <button onClick={() => handleDeleteInvoice(inv.masterInvoiceId)} title="Void / Delete" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} /></button>
                       </td>
@@ -739,7 +843,6 @@ export default function InventoryManagement() {
                 </tbody>
               </table>
             </div>
-
           </div>
         )}
 
@@ -749,7 +852,7 @@ export default function InventoryManagement() {
               <div style={{ background: sheetTheme.headerOrangeBg, color: sheetTheme.headerOrangeText, padding: '16px', fontWeight: '800', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>Recipe Master (Batch Templates)</div>
               
               <div style={{ padding: '24px', display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <form onSubmit={handleSaveRecipe} style={{ flex: '1 1 400px', background: '#fff', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+                <form onSubmit={handleSaveRecipe} className="no-print" style={{ flex: '1 1 400px', background: '#fff', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
                     <div style={{ padding: '16px', borderBottom: `1px solid ${sheetTheme.border}`, background: '#f8fafc' }}>
                         <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '4px', display: 'block' }}>Batch / Recipe Name</label>
                         <input type="text" value={recipeForm.name} onChange={e => setRecipeForm({...recipeForm, name: e.target.value})} placeholder="e.g. Standard Biryani Pot" style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required />
@@ -801,7 +904,7 @@ export default function InventoryManagement() {
                             <div key={recipe.id} style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '6px', padding: '12px', background: '#f8fafc' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                     <span style={{ fontWeight: '800', fontSize: '14px', color: '#1f2937' }}>{recipe.name}</span>
-                                    <button onClick={() => handleDeleteRecipe(recipe.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                                    <button className="no-print" onClick={() => handleDeleteRecipe(recipe.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={14} /></button>
                                 </div>
                                 <div style={{ fontSize: '12px', color: '#4b5563' }}>
                                     {recipe.ingredients.map(ing => {
@@ -820,7 +923,7 @@ export default function InventoryManagement() {
         {/* TAB 4: KITCHEN PRODUCTION */}
         {activeTab === 'production' && (
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <form onSubmit={handleSaveProduction} style={{ flex: '1 1 400px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+            <form onSubmit={handleSaveProduction} className="no-print" style={{ flex: '1 1 400px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
                 <div style={{ background: '#fef3c7', color: '#b45309', padding: '16px', fontWeight: '800', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>Log Kitchen Production</div>
                 <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', background: '#fff' }}>
                     <div>
@@ -876,10 +979,10 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* TAB 5: SETUP (ITEM MASTER) WITH REAL-TIME DUPLICATE CHECK */}
+        {/* TAB 5: SETUP (ITEM MASTER) */}
         {activeTab === 'setup' && (
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 350px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+            <div className="no-print" style={{ flex: '1 1 350px', border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
               <div style={{ background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, padding: '12px 16px', fontWeight: '700', fontSize: '14px', borderBottom: `1px solid ${sheetTheme.border}` }}>
                 {editItemId ? '✏️ Edit Item / Expense' : '➕ Add New Item / Expense'}
               </div>
@@ -890,10 +993,10 @@ export default function InventoryManagement() {
                   {isDuplicateItemName && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', fontWeight: '700' }}>⚠️ An item with this exact name already exists.</div>}
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Item Classification Type</label>
+                  <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Classification Type</label>
                   <select value={newItem.type} onChange={e => setNewItem({...newItem, type: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px', fontWeight: '700', color: newItem.type === 'Recipe Stock' ? '#059669' : '#d97706' }}>
-                    <option value="Recipe Stock">Recipe Stock (Enters Fridge/Kitchen Stock)</option>
-                    <option value="Direct Expense">Direct Expense / Consumable (Bypasses Fridge Stock)</option>
+                    <option value="Recipe Stock">Recipe Stock</option>
+                    <option value="Direct Expense">Direct Expense / Consumable</option>
                   </select>
                 </div>
                 <div>
@@ -910,7 +1013,7 @@ export default function InventoryManagement() {
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Unit of Measure (UOM)</label>
-                  <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, bottles, boxes" />
+                  <input type="text" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})} style={{ width: '100%', padding: '8px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} required placeholder="e.g. kg, L, boxes, pcs" />
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                   {editItemId && (
@@ -932,7 +1035,7 @@ export default function InventoryManagement() {
                     <th style={{ padding: '8px 16px' }}>Type</th>
                     <th style={{ padding: '8px 16px' }}>Category</th>
                     <th style={{ padding: '8px 16px' }}>UOM</th>
-                    <th style={{ padding: '8px 16px', textAlign: 'center' }}>Actions</th>
+                    <th className="no-print" style={{ padding: '8px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -942,7 +1045,7 @@ export default function InventoryManagement() {
                       <td style={{ padding: '8px 16px', fontSize: '12px', fontWeight: '700', color: item.type === 'Direct Expense' ? '#d97706' : '#059669' }}>{item.type || 'Recipe Stock'}</td>
                       <td style={{ padding: '8px 16px', fontSize: '12px', color: '#6b7280' }}>{item.category}</td>
                       <td style={{ padding: '8px 16px', fontSize: '12px', fontWeight: '700' }}>{item.unit}</td>
-                      <td style={{ padding: '8px 16px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                      <td className="no-print" style={{ padding: '8px 16px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px' }}>
                         <button onClick={() => handleEditItemClick(item)} title="Edit Item" style={{ background: 'none', border: 'none', color: '#0369a1', cursor: 'pointer' }}><Edit size={14} /></button>
                         <button onClick={() => handleDeleteItem(item.id)} title="Delete Item" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={14} /></button>
                       </td>
