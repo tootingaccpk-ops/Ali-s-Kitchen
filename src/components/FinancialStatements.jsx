@@ -298,12 +298,22 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
       if (!inv) return;
       const invVat = Number(inv.totalVat) || 0;
       
-      const linkedPayments = validReceipts.filter(r => r.linkedInvoiceId === inv.id && r.type === 'Payment');
+      const linkedPayments = [];
+      validReceipts.forEach(r => {
+         if (r.type === 'Payment') {
+             if (r.linkedInvoiceId === inv.id) {
+                 linkedPayments.push({ ...r, appliedAmount: Number(r.amount) || 0 });
+             } else if (r.linkedInvoices && Array.isArray(r.linkedInvoices)) {
+                 const match = r.linkedInvoices.find(li => li.invoiceId === inv.id);
+                 if (match) linkedPayments.push({ ...r, appliedAmount: Number(match.appliedAmount) || 0 });
+             }
+         }
+      });
 
       if (linkedPayments.length > 0) {
-          const totalPaid = linkedPayments.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) || 1;
+          const totalPaid = linkedPayments.reduce((sum, r) => sum + r.appliedAmount, 0) || 1;
           linkedPayments.forEach(pay => {
-             const payShare = (Number(pay.amount) || 0) / totalPaid;
+             const payShare = pay.appliedAmount / totalPaid;
              const shareVat = invVat * payShare;
              const col = getBankCol(pay.mode === 'Bank' ? pay.bankName : 'Cash in Hand');
              if (col && typeof vatPurchasesCols[col] !== 'undefined') {
@@ -330,9 +340,9 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
                    const vendorName = inv.supplier || 'Unassigned Vendor';
                    
                    if (linkedPayments.length > 0) {
-                       const totalPaid = linkedPayments.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) || 1;
+                       const totalPaid = linkedPayments.reduce((sum, r) => sum + r.appliedAmount, 0) || 1;
                        linkedPayments.forEach(pay => {
-                           const payShare = (Number(pay.amount) || 0) / totalPaid;
+                           const payShare = pay.appliedAmount / totalPaid;
                            const shareAmt = grossAmt * payShare;
                            const col = getBankCol(pay.mode === 'Bank' ? pay.bankName : 'Cash in Hand');
                            if (isCogs) {
@@ -913,8 +923,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
 
   const theme = { bg: '#ffffff', cardBg: '#ffffff', textMain: '#000000', textMuted: '#000000', primary: '#0ea5e9', border: '#cbd5e1' };
   
-  // FIX: Removed the "|| 1" fallback so zero income correctly passes a zero to calcRatio
-  const uiRatioBase = pnlData.totalIncomeCols.total;
+  const uiRatioBase = pnlData.totalIncomeCols.total || 1;
 
   const renderPnlSection = (title, dataObj, isCombined, customColor = '', subtotalLabel = '') => {
     if (!dataObj || !dataObj.arr || dataObj.arr.length === 0) return null;
