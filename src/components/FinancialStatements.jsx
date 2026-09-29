@@ -80,7 +80,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     return set;
   }, [accountsDb]);
 
-  const handleExport = (format, reportTitle, headers, dataRows, orientation = 'l') => {
+  const handleExport = (format, reportTitle, headers, dataRows, orientation = 'p') => {
     if (!dataRows || dataRows.length === 0) return alert("No data available to export for this date range.");
     const businessName = "Ali's Kitchen"; 
     const period = `Period: ${formatDate(dateFrom)} to ${formatDate(dateTo)}`; 
@@ -652,7 +652,7 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
     rows.push(['TOTALS', '', fmtMoney(deliveryAuditTotals.totPos), fmtMoney(deliveryAuditTotals.totNeg), '']);
     rows.push(['NET BALANCE (Net-Off)', '', '', '', `£ ${fmtMoney(deliveryAuditTotals.net)} (${deliveryAuditTotals.net >= 0 ? 'Net Positive' : 'Net Negative'})`]);
 
-    handleExport(format, title, headers, rows, 'l');
+    handleExport(format, title, headers, rows, 'p');
   };
 
   const unifiedLedger = useMemo(() => {
@@ -1035,14 +1035,14 @@ export default function FinancialStatements({ salesDb = [], purchasesDb = [], re
           <div style={{ display: 'flex', gap: '8px' }}>
             {financialsTab === 'pnl_detailed' && (
               <>
-                <button onClick={() => handleExport('excel', 'Profit & Loss (Detailed)', pnlDetailedHeaders, getActiveExportRows(false), 'l')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileSpreadsheet size={14} color="#10b981" /> Export Excel</button>
-                <button onClick={() => handleExport('pdf', 'Profit & Loss (Detailed)', pnlDetailedHeaders, getActiveExportRows(false), 'l')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileText size={14} color="#ef4444" /> Export PDF</button>
+                <button onClick={() => handleExport('excel', 'Profit & Loss (Detailed)', pnlDetailedHeaders, getActiveExportRows(false), 'p')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileSpreadsheet size={14} color="#10b981" /> Export Excel</button>
+                <button onClick={() => handleExport('pdf', 'Profit & Loss (Detailed)', pnlDetailedHeaders, getActiveExportRows(false), 'p')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileText size={14} color="#ef4444" /> Export PDF</button>
               </>
             )}
             {financialsTab === 'pnl_combined' && (
               <>
-                <button onClick={() => handleExport('excel', 'Profit & Loss (Combined)', pnlCombinedHeaders, getActiveExportRows(true), 'l')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileSpreadsheet size={14} color="#10b981" /> Export Excel</button>
-                <button onClick={() => handleExport('pdf', 'Profit & Loss (Combined)', pnlCombinedHeaders, getActiveExportRows(true), 'l')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileText size={14} color="#ef4444" /> Export PDF</button>
+                <button onClick={() => handleExport('excel', 'Profit & Loss (Combined)', pnlCombinedHeaders, getActiveExportRows(true), 'p')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileSpreadsheet size={14} color="#10b981" /> Export Excel</button>
+                <button onClick={() => handleExport('pdf', 'Profit & Loss (Combined)', pnlCombinedHeaders, getActiveExportRows(true), 'p')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#f8fafc', color: '#000', border: `1px solid ${theme.border}`, borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}><FileText size={14} color="#ef4444" /> Export PDF</button>
               </>
             )}
             {financialsTab === 'tb' && (
