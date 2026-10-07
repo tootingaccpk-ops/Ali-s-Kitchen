@@ -50,6 +50,9 @@ export default function InventoryManagement() {
   // Opening Stock state
   const [localOpeningStock, setLocalOpeningStock] = useState({});
   const [isSavingStock, setIsSavingStock] = useState(false);
+  
+  // Quick Add State
+  const [quickAddForm, setQuickAddForm] = useState({ name: '', cost: '', qty: '' });
 
   // Load Data
   useEffect(() => {
@@ -210,7 +213,7 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error deleting template."); }
   };
 
-  // --- OPENING STOCK HANDLERS ---
+  // --- OPENING STOCK & QUICK ADD HANDLERS ---
   const handleSaveOpeningStock = async () => {
     setIsSavingStock(true);
     try {
@@ -226,6 +229,34 @@ export default function InventoryManagement() {
       alert("Error saving opening stock");
     } finally {
       setIsSavingStock(false);
+    }
+  };
+
+  const handleQuickAdd = async () => {
+    if (!quickAddForm.name.trim() || quickAddForm.cost === '') return alert("Please enter an Item Name and Cost.");
+    
+    const cost = Number(quickAddForm.cost);
+    const qty = Number(quickAddForm.qty) || 0;
+
+    const newItem = {
+      name: quickAddForm.name.trim(),
+      batchCost: cost,
+      defaultYield: 1,
+      costPerPortion: cost,
+      spicesCost: cost,
+      ingredients: [],
+      openingQty: qty
+    };
+
+    try {
+      const docRef = await addDoc(collection(db, "erp_recipes"), newItem);
+      const savedItem = { id: docRef.id, ...newItem };
+      setRecipesDb(prev => [...prev, savedItem].sort((a,b) => a.name.localeCompare(b.name)));
+      setLocalOpeningStock(prev => ({ ...prev, [docRef.id]: qty }));
+      setQuickAddForm({ name: '', cost: '', qty: '' });
+      alert("✅ New item instantly saved to stock!");
+    } catch (err) {
+      alert("Error adding item.");
     }
   };
 
@@ -598,6 +629,16 @@ export default function InventoryManagement() {
         {/* TAB 5: OPENING STOCK */}
         {activeTab === 'opening' && (
           <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+            
+            {/* QUICK ADD ROW */}
+            <div style={{ padding: '16px 24px', background: '#f0fdf4', borderBottom: `1px solid #bbf7d0`, display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: '800', color: '#166534', marginRight: '8px' }}>⚡ Quick Add (Drinks/Non-Cooked):</div>
+              <input type="text" placeholder="Item Name (e.g. Water)" value={quickAddForm.name} onChange={e => setQuickAddForm({...quickAddForm, name: e.target.value})} style={{ flex: 1, minWidth: '150px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
+              <input type="number" step="any" placeholder="Cost per Item (£)" value={quickAddForm.cost} onChange={e => setQuickAddForm({...quickAddForm, cost: e.target.value})} style={{ width: '140px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
+              <input type="number" step="any" placeholder="Starting Qty" value={quickAddForm.qty} onChange={e => setQuickAddForm({...quickAddForm, qty: e.target.value})} style={{ width: '120px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
+              <button onClick={handleQuickAdd} style={{ padding: '10px 20px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '800' }}>+ Add to Stock</button>
+            </div>
+
             <div style={{ background: sheetTheme.headerGreenBg, color: sheetTheme.headerGreenText, padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>
               Setup Opening Stock Balances
             </div>
