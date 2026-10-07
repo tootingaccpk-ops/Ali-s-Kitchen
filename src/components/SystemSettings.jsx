@@ -6,12 +6,11 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// Added 'Inventory & Stock' to the permissions array
 const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Inventory & Stock', 'Reports', 'System Setup', 'Timesheets'];
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
 export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
-  const [localAccounts, setLocalAccounts] = useState(accounts || []);
+  const [localAccounts, setLocalAccounts] = useState([]);
   const [importStatus, setImportStatus] = useState('');
   
   const [customCategoryTypes, setCustomCategoryTypes] = useState(() => { try { return JSON.parse(localStorage.getItem('erp_custom_cat_types')) || {}; } catch(e) { return {}; } });
@@ -29,7 +28,10 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
   useEffect(() => {
     if (accounts && accounts.length > 0) {
-      setLocalAccounts(accounts);
+      setLocalAccounts(accounts.map(acc => ({
+        ...acc,
+        originalName: acc.originalName || acc.name // Track the original name for renames
+      })));
     }
   }, [accounts]);
 
@@ -157,13 +159,29 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   };
 
   const handleAccountChange = (id, field, value) => {
-    setLocalAccounts(prev => prev.map(acc => { if (acc.id === id) { let parsedValue = value; if (field === 'balance') parsedValue = value === '' ? 0 : parseFloat(value); return { ...acc, [field]: parsedValue }; } return acc; }));
+    setLocalAccounts(prev => prev.map(acc => { 
+      if (acc.id === id) { 
+        let parsedValue = value; 
+        if (field === 'balance') parsedValue = value === '' ? 0 : parseFloat(value); 
+        return { ...acc, [field]: parsedValue }; 
+      } 
+      return acc; 
+    }));
   };
 
-  const addAccount = () => { setLocalAccounts(prev => [...prev, { id: Date.now().toString(), name: '', category: '', balance: 0 }]); };
-  const removeAccount = (id) => { setLocalAccounts(prev => prev.filter(acc => acc.id !== id)); };
+  const addAccount = () => { 
+    setLocalAccounts(prev => [...prev, { id: Date.now().toString(), name: '', originalName: '', category: '', balance: 0 }]); 
+  };
+  
+  const removeAccount = (id) => { 
+    setLocalAccounts(prev => prev.filter(acc => acc.id !== id)); 
+  };
 
-  const cancelChanges = () => { if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { setLocalAccounts(accounts || []); } };
+  const cancelChanges = () => { 
+    if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { 
+      setLocalAccounts(accounts.map(acc => ({ ...acc, originalName: acc.originalName || acc.name })) || []); 
+    } 
+  };
 
   const handleSaveCategory = (e) => {
     e.preventDefault();
@@ -223,17 +241,25 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
     setCategoriesMap(newMap);
     setAccounts(cleanAccounts);
-    setLocalAccounts(cleanAccounts);
+    
+    // Update local state to treat current names as the new "original" names
+    setLocalAccounts(cleanAccounts.map(acc => ({ ...acc, originalName: acc.name })));
+    
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
 
     try {
       const querySnapshot = await getDocs(collection(db, "erp_accounts"));
-      const existingDocs = {};
+      const firebaseDocsById = {};
+      const firebaseDocsByName = {};
+      
       querySnapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        if (data.name) existingDocs[data.name.trim().toLowerCase()] = docSnap.id;
+        firebaseDocsById[docSnap.id] = { id: docSnap.id, ...data };
+        if (data.name) firebaseDocsByName[data.name.trim().toLowerCase()] = docSnap.id;
       });
+
+      const processedFirebaseIds = new Set();
 
       for (const acc of cleanAccounts) {
         const docData = {
@@ -242,13 +268,37 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
           balance: Number(acc.balance) || 0
         };
 
-        const matchKey = acc.name.trim().toLowerCase();
-        if (existingDocs[matchKey]) {
-          await updateDoc(doc(db, "erp_accounts", existingDocs[matchKey]), docData);
+        const currentNameKey = acc.name.trim().toLowerCase();
+        const originalNameKey = (acc.originalName || '').trim().toLowerCase();
+
+        let targetDocId = null;
+
+        if (firebaseDocsById[acc.id]) {
+          targetDocId = acc.id; // Match exact Firebase ID
+        } else if (originalNameKey && firebaseDocsByName[originalNameKey]) {
+          targetDocId = firebaseDocsByName[originalNameKey]; // Match original name (renamed)
+        } else if (firebaseDocsByName[currentNameKey]) {
+          targetDocId = firebaseDocsByName[currentNameKey]; // Fallback to current name
+        }
+
+        if (targetDocId) {
+          await updateDoc(doc(db, "erp_accounts", targetDocId), docData);
+          processedFirebaseIds.add(targetDocId);
+          acc.id = targetDocId; // Keep IDs synced
         } else {
-          await addDoc(collection(db, "erp_accounts"), docData);
+          const newDocRef = await addDoc(collection(db, "erp_accounts"), docData);
+          acc.id = newDocRef.id; // Store generated Firebase ID locally
+          processedFirebaseIds.add(newDocRef.id);
         }
       }
+
+      // Delete any accounts in Firebase that were completely removed from the table
+      for (const snap of querySnapshot.docs) {
+        if (!processedFirebaseIds.has(snap.id)) {
+          await deleteDoc(doc(db, "erp_accounts", snap.id));
+        }
+      }
+
       alert('✅ Chart of Accounts Saved Successfully to Cloud!');
     } catch (error) {
       console.error("Error syncing accounts to Firebase:", error);
