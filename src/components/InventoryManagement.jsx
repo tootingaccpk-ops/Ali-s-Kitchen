@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase'; 
 import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
-import { LayoutDashboard, Save, ChefHat, Trash2, Download, Printer, BarChart3, Settings, PlusCircle, PackageOpen } from 'lucide-react';
+import { LayoutDashboard, Save, ChefHat, Trash2, FileSpreadsheet, FileText, BarChart3, Settings, PlusCircle, PackageOpen } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const getToday = () => {
   const d = new Date();
@@ -39,6 +42,7 @@ export default function InventoryManagement() {
     lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }]
   });
   
+  const [stockAsOfDate, setStockAsOfDate] = useState(getToday());
   const [reportDates, setReportDates] = useState({ startDate: getFirstDayOfMonth(), endDate: getToday() });
   const [showProductionModal, setShowProductionModal] = useState(false);
   const [prodLog, setProdLog] = useState({ date: getToday(), recipe: null, actualYield: '' });
@@ -86,13 +90,13 @@ export default function InventoryManagement() {
       };
     });
 
-    productionDb.forEach(prod => {
+    productionDb.filter(p => p.date <= stockAsOfDate).forEach(prod => {
       if (stockMap[prod.recipeId]) {
         stockMap[prod.recipeId].totalProduced += Number(prod.portionsMade) || 0;
       }
     });
 
-    salesDb.forEach(sale => {
+    salesDb.filter(s => s.date <= stockAsOfDate).forEach(sale => {
       if (sale.pmix) {
         sale.pmix.forEach(p => {
           if (stockMap[p.recipeId]) {
@@ -110,7 +114,7 @@ export default function InventoryManagement() {
         totalValue: currentQty * item.costPerPortion
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [recipesDb, productionDb, salesDb]);
+  }, [recipesDb, productionDb, salesDb, stockAsOfDate]);
 
   // --- REPORTING ENGINE: COGS & DAILY PROFIT ---
   const dailyReportsData = useMemo(() => {
@@ -254,35 +258,62 @@ export default function InventoryManagement() {
   };
 
   // --- EXPORT FUNCTIONS ---
-  const downloadCSV = (csvContent, filename) => {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
-    link.download = filename; link.style.visibility = 'hidden';
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  const handleExportExcel = () => {
+    let wsData = [];
+    if (activeTab === 'dashboard') {
+      wsData.push(["Inventory Valuation Report", `As of: ${stockAsOfDate}`]);
+      wsData.push([]);
+      wsData.push(["Item Name", "Opening Qty", "Current Portions", "Static Cost/Portion (£)", "Total Asset Value (£)"]);
+      finishedGoodsStock.forEach(item => {
+        wsData.push([item.name, item.openingQty, item.currentQty, item.costPerPortion, Math.max(0, item.totalValue)]);
+      });
+    } else if (activeTab === 'reports') {
+      wsData.push(["COGS Analytics Report", `From: ${reportDates.startDate} To: ${reportDates.endDate}`]);
+      wsData.push([]);
+      wsData.push(["Date", "Selling Price (£)", "Food Cost (£)", "Difference (£)", "Ratio of Difference (%)"]);
+      dailyReportsData.forEach(day => {
+        wsData.push([day.date, day.revenue, day.cogs, day.grossProfit, day.foodCostPct]);
+      });
+    } else {
+      wsData.push(["Export data not available for this tab."]);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Inventory Data");
+    XLSX.writeFile(wb, `Inventory_Report_${getToday()}.xlsx`);
   };
 
-  const handleExportExcel = () => {
-    let csvStr = `Inventory Valuation Report (${getToday()})\n\n`;
-    csvStr += `Finished Goods Stock\nItem Name,Current Portions,Static Cost/Portion(£),Total Asset Value(£)\n`;
-    finishedGoodsStock.forEach(item => {
-      csvStr += `"${item.name}",${item.currentQty},${item.costPerPortion},${item.totalValue}\n`;
-    });
-
-    if (activeTab === 'reports') {
-      csvStr += `\nDaily Revenue & COGS Report (${reportDates.startDate} to ${reportDates.endDate})\n`;
-      csvStr += `Date,Net Revenue(£),COGS(£),Gross Profit(£),Food Cost(%)\n`;
-      dailyReportsData.forEach(day => { csvStr += `${day.date},${day.revenue},${day.cogs},${day.grossProfit},${day.foodCostPct}\n`; });
+  const handleExportPDF = () => {
+    const doc = new jsPDF('p', 'pt', 'a4');
+    doc.setFont("helvetica", "bold");
+    
+    if (activeTab === 'dashboard') {
+      doc.setFontSize(16);
+      doc.text(`Finished Goods Inventory (As of ${stockAsOfDate})`, 40, 40);
+      const headers = [['Item Name', 'Opening Qty', 'Current Portions', 'Static Cost/Portion', 'Total Asset Value']];
+      const data = finishedGoodsStock.map(item => [item.name, item.openingQty, item.currentQty, `£${fmtMoney(item.costPerPortion)}`, `£${fmtMoney(Math.max(0, item.totalValue))}`]);
+      autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] } });
+    } else if (activeTab === 'reports') {
+      doc.setFontSize(16);
+      doc.text(`COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`, 40, 40);
+      const headers = [['Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
+      const data = dailyReportsData.map(day => [day.date, `£${fmtMoney(day.revenue)}`, `£${fmtMoney(day.cogs)}`, `£${fmtMoney(day.grossProfit)}`, `${fmtPct(day.foodCostPct)}`]);
+      autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [126, 34, 206] } });
+    } else {
+      doc.setFontSize(14);
+      doc.text(`Please switch to the Dashboard or Analytics tab to export a PDF.`, 40, 40);
     }
-    downloadCSV(csvStr, `Inventory_Reports_${getToday()}.csv`);
+    
+    doc.save(`Inventory_Report_${getToday()}.pdf`);
   };
 
   return (
     <div style={{ padding: '24px', fontFamily: sheetTheme.font, background: '#f8fafc', minHeight: '100vh', color: '#0f172a' }}>
-      <style>{`@media print { .no-print { display: none !important; } body { background: #fff !important; } }`}</style>
-
+      
       {/* PRODUCTION MODAL */}
       {showProductionModal && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.8)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.8)', zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ background: '#fff', width: '400px', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
             <div style={{ padding: '16px 20px', background: sheetTheme.headerOrangeBg, color: sheetTheme.headerOrangeText, fontWeight: '800', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>Log Kitchen Production</span>
@@ -316,19 +347,19 @@ export default function InventoryManagement() {
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         
         {/* HEADER */}
-        <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '16px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '16px', marginBottom: '24px' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '28px', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.5px' }}>Finished Goods Inventory</h1>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b', fontWeight: '500' }}>Recipe costing, 1-click batch logging, and automated COGS.</p>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleExportExcel} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}><Download size={16} /> Export CSV</button>
-            <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}><Printer size={16} /> Print Report</button>
+            <button onClick={handleExportExcel} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}><FileSpreadsheet size={16} /> Export to Excel</button>
+            <button onClick={handleExportPDF} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}><FileText size={16} /> Export to PDF</button>
           </div>
         </div>
 
         {/* NAVIGATION TABS */}
-        <div className="no-print" style={{ display: 'flex', background: '#fff', border: `1px solid ${sheetTheme.border}`, marginBottom: '32px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+        <div style={{ display: 'flex', background: '#fff', border: `1px solid ${sheetTheme.border}`, marginBottom: '32px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
           <button onClick={() => setActiveTab('dashboard')} style={{ flex: 1, padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'dashboard' ? sheetTheme.headerBlueBg : 'transparent', color: activeTab === 'dashboard' ? sheetTheme.headerBlueText : '#64748b', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}><LayoutDashboard size={18} /> Live Stock</button>
           <button onClick={() => setActiveTab('production')} style={{ flex: 1, padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'production' ? sheetTheme.headerOrangeBg : 'transparent', color: activeTab === 'production' ? sheetTheme.headerOrangeText : '#64748b', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}><ChefHat size={18} /> Cook Batches</button>
           <button onClick={() => setActiveTab('reports')} style={{ flex: 1, padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: activeTab === 'reports' ? sheetTheme.headerPurpleBg : 'transparent', color: activeTab === 'reports' ? sheetTheme.headerPurpleText : '#64748b', border: 'none', borderRight: `1px solid ${sheetTheme.border}`, fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}><BarChart3 size={18} /> COGS Analytics</button>
@@ -338,35 +369,45 @@ export default function InventoryManagement() {
 
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
-          <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-            <div style={{ background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Finished Goods Stock (Fridge & Freezer)</span>
-              <span style={{ fontSize: '13px', fontWeight: '700', background: '#fff', padding: '4px 12px', borderRadius: '20px', color: '#0284c7' }}>Total Valuation: £ {fmtMoney(finishedGoodsStock.reduce((sum, item) => sum + Math.max(0, item.totalValue), 0))}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            
+            <div style={{ display: 'flex', gap: '16px', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: `1px solid ${sheetTheme.border}`, alignItems: 'center' }}>
+              <label style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a' }}>View Stock As Of Date:</label>
+              <input type="date" value={stockAsOfDate} onChange={e => setStockAsOfDate(e.target.value)} style={{ padding: '8px 12px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px', fontWeight: '700', outline: 'none' }} />
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
-                <tr>
-                  <th style={{ padding: '14px 24px' }}>Prepared Item</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right' }}>Current Portions</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right' }}>Static Cost / Portion</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right' }}>Total Asset Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {finishedGoodsStock.length === 0 ? (
-                  <tr><td colSpan="4" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '500' }}>No items in stock. Set opening balances or log batches.</td></tr>
-                ) : (
-                  finishedGoodsStock.map(item => (
-                    <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
-                      <td style={{ padding: '16px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</td>
-                      <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: item.currentQty < 0 ? '#dc2626' : (item.currentQty === 0 ? '#94a3b8' : '#059669') }}>{fmtQty(item.currentQty)}</td>
-                      <td style={{ padding: '16px 24px', textAlign: 'right', fontSize: '14px', fontWeight: '600', color: '#475569' }}>£ {fmtMoney(item.costPerPortion)}</td>
-                      <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>£ {fmtMoney(Math.max(0, item.totalValue))}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+
+            <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+              <div style={{ background: sheetTheme.headerBlueBg, color: sheetTheme.headerBlueText, padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Finished Goods Stock (Fridge & Freezer)</span>
+                <span style={{ fontSize: '13px', fontWeight: '700', background: '#fff', padding: '4px 12px', borderRadius: '20px', color: '#0284c7' }}>Total Valuation: £ {fmtMoney(finishedGoodsStock.reduce((sum, item) => sum + Math.max(0, item.totalValue), 0))}</span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
+                  <tr>
+                    <th style={{ padding: '14px 24px' }}>Prepared Item</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Opening Qty</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Current Portions</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Static Cost / Portion</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Total Asset Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {finishedGoodsStock.length === 0 ? (
+                    <tr><td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '500' }}>No items in stock. Set opening balances or log batches.</td></tr>
+                  ) : (
+                    finishedGoodsStock.map(item => (
+                      <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
+                        <td style={{ padding: '16px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</td>
+                        <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#64748b' }}>{fmtQty(item.openingQty)}</td>
+                        <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: item.currentQty < 0 ? '#dc2626' : (item.currentQty === 0 ? '#94a3b8' : '#059669') }}>{fmtQty(item.currentQty)}</td>
+                        <td style={{ padding: '16px 24px', textAlign: 'right', fontSize: '14px', fontWeight: '600', color: '#475569' }}>£ {fmtMoney(item.costPerPortion)}</td>
+                        <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>£ {fmtMoney(Math.max(0, item.totalValue))}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -401,7 +442,7 @@ export default function InventoryManagement() {
         {/* TAB 3: REPORTS */}
         {activeTab === 'reports' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            <div className="no-print" style={{ display: 'flex', gap: '16px', background: '#fff', padding: '20px', borderRadius: '12px', border: `1px solid ${sheetTheme.border}` }}>
+            <div style={{ display: 'flex', gap: '16px', background: '#fff', padding: '20px', borderRadius: '12px', border: `1px solid ${sheetTheme.border}` }}>
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>Report Start Date</label>
                 <input type="date" value={reportDates.startDate} onChange={e => setReportDates({...reportDates, startDate: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px' }} />
@@ -420,10 +461,10 @@ export default function InventoryManagement() {
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
                   <tr>
                     <th style={{ padding: '14px 24px' }}>Date</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Net Revenue (£)</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>COGS (£)</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Gross Profit (£)</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Food Cost %</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Selling Price (£)</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Food Cost (£)</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Difference (£)</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Ratio of Difference (%)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -450,8 +491,7 @@ export default function InventoryManagement() {
         {activeTab === 'setup' && (
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             
-            {/* BUILDER FORM */}
-            <div className="no-print" style={{ flex: '1 1 450px', border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff' }}>
+            <div style={{ flex: '1 1 450px', border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff' }}>
               <div style={{ background: '#f1f5f9', color: '#0f172a', padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>
                 ➕ Build Recipe Cost Calculator
               </div>
@@ -461,7 +501,6 @@ export default function InventoryManagement() {
                   <input type="text" value={setupForm.name} onChange={e => setSetupForm({...setupForm, name: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px' }} required placeholder="e.g. 10kg Biryani Pot" />
                 </div>
                 
-                {/* DYNAMIC INGREDIENT ROWS */}
                 <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ background: '#f8fafc', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
@@ -526,7 +565,6 @@ export default function InventoryManagement() {
               </form>
             </div>
 
-            {/* MASTER LIST */}
             <div style={{ flex: '1 1 450px', border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff' }}>
               <div style={{ background: '#f8fafc', padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>Saved Recipes</div>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
@@ -534,7 +572,7 @@ export default function InventoryManagement() {
                   <tr>
                     <th style={{ padding: '12px 24px' }}>Recipe Details</th>
                     <th style={{ padding: '12px 24px', textAlign: 'right' }}>Cost / Portion</th>
-                    <th className="no-print" style={{ padding: '12px 24px', textAlign: 'center' }}></th>
+                    <th style={{ padding: '12px 24px', textAlign: 'center' }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -546,7 +584,7 @@ export default function InventoryManagement() {
                         <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Total Cost: £{fmtMoney(item.batchCost)} | Yield: {item.defaultYield}</div>
                       </td>
                       <td style={{ padding: '14px 24px', textAlign: 'right', fontSize: '14px', fontWeight: '800', color: '#059669' }}>£ {fmtMoney(item.costPerPortion)}</td>
-                      <td className="no-print" style={{ padding: '14px 24px', textAlign: 'center' }}>
+                      <td style={{ padding: '14px 24px', textAlign: 'center' }}>
                         <button onClick={() => handleDeleteTemplate(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} /></button>
                       </td>
                     </tr>
@@ -557,35 +595,30 @@ export default function InventoryManagement() {
           </div>
         )}
 
-        {/* TAB 5: OPENING STOCK (CoA Style) */}
+        {/* TAB 5: OPENING STOCK */}
         {activeTab === 'opening' && (
           <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
             <div style={{ background: sheetTheme.headerGreenBg, color: sheetTheme.headerGreenText, padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>
               Setup Opening Stock Balances
             </div>
             <div style={{ padding: '16px 24px', background: '#f8fafc', fontSize: '13px', color: '#475569', borderBottom: `1px solid ${sheetTheme.border}` }}>
-              Enter the physical amount of prepared portions you currently have in the freezer. This acts as the starting balance before new batches are cooked or sales are deducted.
+              Enter the physical amount of prepared portions you currently have in the freezer.
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f1f5f9', borderBottom: `1px solid ${sheetTheme.border}` }}>
                 <tr>
-                  <th style={{ padding: '14px 24px' }}>Finished Good (Recipe)</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right' }}>Static Cost/Portion</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right', width: '200px' }}>Opening Qty (Portions)</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right' }}>Calculated Opening Value</th>
+                  <th style={{ padding: '14px 24px' }}>Finished Good (Recipe Item)</th>
+                  <th style={{ padding: '14px 24px', textAlign: 'right', width: '250px' }}>Opening Qty (Portions)</th>
                 </tr>
               </thead>
               <tbody>
                 {recipesDb.length === 0 ? (
-                  <tr><td colSpan="4" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>Please create recipes in the Setup tab first.</td></tr>
+                  <tr><td colSpan="2" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>Please create recipes in the Setup tab first.</td></tr>
                 ) : (
                   recipesDb.map(item => {
-                    const currentInput = Number(localOpeningStock[item.id]) || 0;
-                    const calculatedValue = currentInput * item.costPerPortion;
                     return (
                       <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
-                        <td style={{ padding: '12px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</td>
-                        <td style={{ padding: '12px 24px', textAlign: 'right', fontSize: '13px', color: '#64748b' }}>£ {fmtMoney(item.costPerPortion)}</td>
+                        <td style={{ padding: '16px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</td>
                         <td style={{ padding: '12px 24px', textAlign: 'right' }}>
                           <input 
                             type="number" 
@@ -596,7 +629,6 @@ export default function InventoryManagement() {
                             style={{ width: '100%', padding: '10px', textAlign: 'right', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px', fontWeight: '800', fontSize: '14px' }}
                           />
                         </td>
-                        <td style={{ padding: '12px 24px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>£ {fmtMoney(calculatedValue)}</td>
                       </tr>
                     );
                   })
