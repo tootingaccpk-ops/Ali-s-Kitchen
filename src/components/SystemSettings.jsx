@@ -9,7 +9,7 @@ import autoTable from 'jspdf-autotable';
 const ALL_TABS = ['Dashboard', 'Daily Sales', 'Purchases & Expenses', 'Receipts & Payments', 'Cash & Bank Books', 'Delivery Settlements', 'Inventory & Stock', 'Reports', 'System Setup', 'Timesheets'];
 const ERP_STORAGE_KEYS = ['erp_sales_db', 'erp_purchases', 'erp_receipts', 'erp_delivery', 'erp_accounts', 'erp_categories', 'erp_users', 'erp_custom_cat_types'];
 
-export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb }) {
+export default function SystemSetup({ accounts = [], setAccounts, categoriesMap = {}, setCategoriesMap, salesDb = [], setSalesDb, receiptsDb = [], setReceiptsDb, purchasesDb = [], setPurchasesDb }) {
   const [localAccounts, setLocalAccounts] = useState([]);
   const [importStatus, setImportStatus] = useState('');
   
@@ -28,10 +28,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
   useEffect(() => {
     if (accounts && accounts.length > 0) {
-      setLocalAccounts(accounts.map(acc => ({
-        ...acc,
-        originalName: acc.originalName || acc.name // Track the original name for renames
-      })));
+      setLocalAccounts(accounts.map(acc => ({ ...acc, originalName: acc.originalName || acc.name })));
     }
   }, [accounts]);
 
@@ -40,39 +37,23 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       try {
         const querySnapshot = await getDocs(collection(db, "erp_users"));
         const cloudUsers = [];
-        querySnapshot.forEach((doc) => {
-          cloudUsers.push({ id: doc.id, ...doc.data() });
-        });
+        querySnapshot.forEach((doc) => { cloudUsers.push({ id: doc.id, ...doc.data() }); });
         
-        if (cloudUsers.length > 0) {
-          setUsers(cloudUsers);
-        } else {
+        if (cloudUsers.length > 0) { setUsers(cloudUsers); } else {
           const localData = JSON.parse(localStorage.getItem('erp_users'));
-          
           if (Array.isArray(localData) && localData.length > 0) {
             for (const localUser of localData) {
               const { id, ...userDataWithoutOldId } = localUser;
-              await addDoc(collection(db, "erp_users"), {
-                ...userDataWithoutOldId,
-                createdAt: new Date()
-              });
+              await addDoc(collection(db, "erp_users"), { ...userDataWithoutOldId, createdAt: new Date() });
             }
-            
             const refreshedSnapshot = await getDocs(collection(db, "erp_users"));
             const migratedUsers = [];
-            refreshedSnapshot.forEach((doc) => {
-              migratedUsers.push({ id: doc.id, ...doc.data() });
-            });
+            refreshedSnapshot.forEach((doc) => { migratedUsers.push({ id: doc.id, ...doc.data() }); });
             setUsers(migratedUsers);
-          } else {
-            setUsers([{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]);
-          }
+          } else { setUsers([{ id: 'master', username: 'admin', password: 'password123', role: 'Admin', permissions: ALL_TABS }]); }
         }
-      } catch (error) {
-        console.error("Error handling user migration/fetch: ", error);
-      }
+      } catch (error) { console.error("Error handling user migration/fetch: ", error); }
     };
-
     fetchAndMigrateUsers();
   }, []);
 
@@ -84,16 +65,11 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const isAdminOrOwnerRole = newRole.toLowerCase() === 'admin' || newRole.toLowerCase() === 'owner';
 
   const handlePermissionToggle = (tab) => { 
-    if (newPermissions.includes(tab)) { 
-      setNewPermissions(newPermissions.filter(t => t !== tab)); 
-    } else { 
-      setNewPermissions([...newPermissions, tab]); 
-    } 
+    if (newPermissions.includes(tab)) setNewPermissions(newPermissions.filter(t => t !== tab)); 
+    else setNewPermissions([...newPermissions, tab]); 
   };
 
-  const togglePasswordVisibility = (id) => {
-    setVisiblePasswords(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const togglePasswordVisibility = (id) => { setVisiblePasswords(prev => ({ ...prev, [id]: !prev[id] })); };
 
   const handleAddUser = async () => {
     if (!newUsername.trim() || !newPassword.trim() || !newRole.trim()) return alert("Please provide a username, password, and role.");
@@ -101,30 +77,14 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     if (newRole.toLowerCase() === 'admin' && users.some(u => String(u.role).toLowerCase() === 'admin')) return alert("An Admin already exists! You can only have one Admin ID. If you need full access for another user, name their role 'Owner'.");
     
     const finalPermissions = isAdminOrOwnerRole ? ALL_TABS : newPermissions;
-    
-    const newUserData = { 
-      username: newUsername.trim(), 
-      password: newPassword.trim(), 
-      role: newRole.trim(), 
-      permissions: finalPermissions,
-      createdAt: new Date()
-    };
+    const newUserData = { username: newUsername.trim(), password: newPassword.trim(), role: newRole.trim(), permissions: finalPermissions, createdAt: new Date() };
 
     try {
       const docRef = await addDoc(collection(db, "erp_users"), newUserData);
-      const updatedUsers = [...users, { id: docRef.id, ...newUserData }];
-      setUsers(updatedUsers); 
-      
-      setNewUsername(''); 
-      setNewPassword(''); 
-      setNewRole(''); 
-      setNewPermissions(['Dashboard', 'Daily Sales']); 
-      
+      setUsers([...users, { id: docRef.id, ...newUserData }]); 
+      setNewUsername(''); setNewPassword(''); setNewRole(''); setNewPermissions(['Dashboard', 'Daily Sales']); 
       alert("✅ User added successfully to the cloud!");
-    } catch (error) {
-      console.error("Error adding user to Firebase: ", error);
-      alert("Database Error: Could not save the user.");
-    }
+    } catch (error) { console.error("Error adding user to Firebase: ", error); alert("Database Error: Could not save the user."); }
   };
 
   const handleRemoveUser = async (id) => { 
@@ -132,13 +92,9 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     if (window.confirm("Are you sure you want to delete this user?")) { 
       try {
         await deleteDoc(doc(db, "erp_users", id));
-        const updatedUsers = users.filter(u => u.id !== id); 
-        setUsers(updatedUsers); 
+        setUsers(users.filter(u => u.id !== id)); 
         alert("✅ User deleted successfully.");
-      } catch (error) {
-        console.error("Error deleting user from Firebase: ", error);
-        alert("Database Error: Could not delete user.");
-      }
+      } catch (error) { console.error("Error deleting user from Firebase: ", error); alert("Database Error: Could not delete user."); }
     } 
   };
 
@@ -146,15 +102,10 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     const newPass = window.prompt("Enter the new password for this user:"); 
     if (newPass && newPass.trim() !== "") { 
       try {
-        const userRef = doc(db, "erp_users", id);
-        await updateDoc(userRef, { password: newPass.trim() });
-        const updatedUsers = users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u); 
-        setUsers(updatedUsers); 
+        await updateDoc(doc(db, "erp_users", id), { password: newPass.trim() });
+        setUsers(users.map(u => u.id === id ? { ...u, password: newPass.trim() } : u)); 
         alert("✅ Password updated successfully in the cloud."); 
-      } catch (error) {
-        console.error("Error updating password in Firebase: ", error);
-        alert("Database Error: Could not update password.");
-      }
+      } catch (error) { console.error("Error updating password in Firebase: ", error); alert("Database Error: Could not update password."); }
     } 
   };
 
@@ -169,31 +120,17 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     }));
   };
 
-  const addAccount = () => { 
-    setLocalAccounts(prev => [...prev, { id: Date.now().toString(), name: '', originalName: '', category: '', balance: 0 }]); 
-  };
-  
-  const removeAccount = (id) => { 
-    setLocalAccounts(prev => prev.filter(acc => acc.id !== id)); 
-  };
+  const addAccount = () => { setLocalAccounts(prev => [...prev, { id: Date.now().toString(), name: '', originalName: '', category: '', balance: 0 }]); };
+  const removeAccount = (id) => { setLocalAccounts(prev => prev.filter(acc => acc.id !== id)); };
 
-  const cancelChanges = () => { 
-    if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { 
-      setLocalAccounts(accounts.map(acc => ({ ...acc, originalName: acc.originalName || acc.name })) || []); 
-    } 
-  };
+  const cancelChanges = () => { if (window.confirm('Are you sure you want to discard all unsaved changes? This will revert the list to your last saved state.')) { setLocalAccounts(accounts.map(acc => ({ ...acc, originalName: acc.originalName || acc.name })) || []); } };
 
   const handleSaveCategory = (e) => {
     e.preventDefault();
     if (!newCatData.name.trim()) return;
     const catName = newCatData.name.trim();
     
-    setCustomCategoryTypes(prev => {
-        const updated = { ...prev, [catName]: newCatData.type };
-        localStorage.setItem('erp_custom_cat_types', JSON.stringify(updated));
-        return updated;
-    });
-    
+    setCustomCategoryTypes(prev => { const updated = { ...prev, [catName]: newCatData.type }; localStorage.setItem('erp_custom_cat_types', JSON.stringify(updated)); return updated; });
     if (pendingAccId) handleAccountChange(pendingAccId, 'category', catName);
     setShowCatModal(false); setNewCatData({ name: '', type: 'Expense' }); setPendingAccId(null);
   };
@@ -203,14 +140,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     
     const cleanAccounts = [...localAccounts].reduce((acc, current) => {
       const nameKey = String(current.name || '').trim().toLowerCase();
-      if (!nameKey) {
-        acc.push(current);
-      } else {
-        if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) {
-          acc.push(current);
-        }
-      }
-      return acc;
+      if (!nameKey) { acc.push(current); } else { if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) { acc.push(current); } } return acc;
     }, []);
 
     const names = cleanAccounts.map(a => String(a.name || '').trim().toLowerCase()).filter(Boolean);
@@ -223,10 +153,7 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
     const newMap = {};
     cleanAccounts.forEach(acc => {
       if (acc.name) {
-        const cat = String(acc.category || '');
-        const catLow = cat.toLowerCase();
-        const accNameLow = String(acc.name).toLowerCase();
-        
+        const cat = String(acc.category || ''); const catLow = cat.toLowerCase(); const accNameLow = String(acc.name).toLowerCase();
         if (accNameLow.includes('vat input')) newMap[acc.name] = 'Asset';
         else if (accNameLow.includes('vat output')) newMap[acc.name] = 'Liability';
         else if (customCategoryTypes[cat]) newMap[acc.name] = customCategoryTypes[cat];
@@ -241,71 +168,103 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
 
     setCategoriesMap(newMap);
     setAccounts(cleanAccounts);
-    
-    // Update local state to treat current names as the new "original" names
     setLocalAccounts(cleanAccounts.map(acc => ({ ...acc, originalName: acc.name })));
-    
     localStorage.setItem('erp_categories', JSON.stringify(newMap));
     localStorage.setItem('erp_custom_cat_types', JSON.stringify(customCategoryTypes));
 
     try {
       const querySnapshot = await getDocs(collection(db, "erp_accounts"));
-      const firebaseDocsById = {};
-      const firebaseDocsByName = {};
-      
-      querySnapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        firebaseDocsById[docSnap.id] = { id: docSnap.id, ...data };
-        if (data.name) firebaseDocsByName[data.name.trim().toLowerCase()] = docSnap.id;
-      });
+      const firebaseDocsById = {}; const firebaseDocsByName = {};
+      querySnapshot.forEach((docSnap) => { const data = docSnap.data(); firebaseDocsById[docSnap.id] = { id: docSnap.id, ...data }; if (data.name) firebaseDocsByName[data.name.trim().toLowerCase()] = docSnap.id; });
 
       const processedFirebaseIds = new Set();
+      const renamesToCascade = [];
 
       for (const acc of cleanAccounts) {
-        const docData = {
-          name: acc.name.trim(),
-          category: acc.category || '',
-          balance: Number(acc.balance) || 0
-        };
+        const docData = { name: acc.name.trim(), category: acc.category || '', balance: Number(acc.balance) || 0 };
+        const currentNameKey = acc.name.trim().toLowerCase(); const originalNameKey = (acc.originalName || '').trim().toLowerCase();
 
-        const currentNameKey = acc.name.trim().toLowerCase();
-        const originalNameKey = (acc.originalName || '').trim().toLowerCase();
+        if (acc.originalName && originalNameKey !== currentNameKey) {
+            renamesToCascade.push({ oldName: acc.originalName.trim(), newName: acc.name.trim() });
+        }
 
         let targetDocId = null;
-
-        if (firebaseDocsById[acc.id]) {
-          targetDocId = acc.id; // Match exact Firebase ID
-        } else if (originalNameKey && firebaseDocsByName[originalNameKey]) {
-          targetDocId = firebaseDocsByName[originalNameKey]; // Match original name (renamed)
-        } else if (firebaseDocsByName[currentNameKey]) {
-          targetDocId = firebaseDocsByName[currentNameKey]; // Fallback to current name
-        }
+        if (firebaseDocsById[acc.id]) targetDocId = acc.id; 
+        else if (originalNameKey && firebaseDocsByName[originalNameKey]) targetDocId = firebaseDocsByName[originalNameKey]; 
+        else if (firebaseDocsByName[currentNameKey]) targetDocId = firebaseDocsByName[currentNameKey];
 
         if (targetDocId) {
-          await updateDoc(doc(db, "erp_accounts", targetDocId), docData);
-          processedFirebaseIds.add(targetDocId);
-          acc.id = targetDocId; // Keep IDs synced
+          await updateDoc(doc(db, "erp_accounts", targetDocId), docData); processedFirebaseIds.add(targetDocId); acc.id = targetDocId; 
         } else {
-          const newDocRef = await addDoc(collection(db, "erp_accounts"), docData);
-          acc.id = newDocRef.id; // Store generated Firebase ID locally
-          processedFirebaseIds.add(newDocRef.id);
+          const newDocRef = await addDoc(collection(db, "erp_accounts"), docData); acc.id = newDocRef.id; processedFirebaseIds.add(newDocRef.id);
         }
       }
 
-      // Delete any accounts in Firebase that were completely removed from the table
-      for (const snap of querySnapshot.docs) {
-        if (!processedFirebaseIds.has(snap.id)) {
-          await deleteDoc(doc(db, "erp_accounts", snap.id));
+      for (const snap of querySnapshot.docs) { if (!processedFirebaseIds.has(snap.id)) { await deleteDoc(doc(db, "erp_accounts", snap.id)); } }
+
+      if (renamesToCascade.length > 0) {
+        // Cascade Receipts Database
+        const receiptsSnap = await getDocs(collection(db, "erp_receipts"));
+        receiptsSnap.forEach(async (docSnap) => {
+           const data = docSnap.data(); let needsUpdate = false; let updatedData = { ...data };
+           renamesToCascade.forEach(rn => {
+              if (updatedData.account === rn.oldName) { updatedData.account = rn.newName; needsUpdate = true; }
+              if (updatedData.bankName === rn.oldName) { updatedData.bankName = rn.newName; needsUpdate = true; }
+              if (updatedData.fromBank === rn.oldName) { updatedData.fromBank = rn.newName; needsUpdate = true; }
+              if (updatedData.toBank === rn.oldName) { updatedData.toBank = rn.newName; needsUpdate = true; }
+              if (updatedData.payee === rn.oldName) { updatedData.payee = rn.newName; needsUpdate = true; }
+           });
+           if (needsUpdate) await updateDoc(doc(db, "erp_receipts", docSnap.id), updatedData);
+        });
+        
+        // Cascade Purchases Database
+        const purchasesSnap = await getDocs(collection(db, "erp_purchases"));
+        purchasesSnap.forEach(async (docSnap) => {
+           const data = docSnap.data(); let needsUpdate = false; let updatedData = { ...data };
+           renamesToCascade.forEach(rn => {
+              if (updatedData.supplier === rn.oldName) { updatedData.supplier = rn.newName; needsUpdate = true; }
+              if (updatedData.lines && Array.isArray(updatedData.lines)) {
+                 updatedData.lines = updatedData.lines.map(l => {
+                     if (l.account === rn.oldName) { needsUpdate = true; return { ...l, account: rn.newName }; }
+                     return l;
+                 });
+              }
+           });
+           if (needsUpdate) await updateDoc(doc(db, "erp_purchases", docSnap.id), updatedData);
+        });
+
+        if (setReceiptsDb) {
+            const updatedLocalReceipts = receiptsDb.map(r => {
+               let ur = { ...r };
+               renamesToCascade.forEach(rn => {
+                  if (ur.account === rn.oldName) ur.account = rn.newName;
+                  if (ur.bankName === rn.oldName) ur.bankName = rn.newName;
+                  if (ur.fromBank === rn.oldName) ur.fromBank = rn.newName;
+                  if (ur.toBank === rn.oldName) ur.toBank = rn.newName;
+                  if (ur.payee === rn.oldName) ur.payee = rn.newName;
+               });
+               return ur;
+            });
+            setReceiptsDb(updatedLocalReceipts); localStorage.setItem('erp_receipts', JSON.stringify(updatedLocalReceipts));
         }
+
+        try {
+            const localPurchases = JSON.parse(localStorage.getItem('erp_purchases') || '[]');
+            const updatedLocalPurchases = localPurchases.map(p => {
+                let up = { ...p };
+                renamesToCascade.forEach(rn => {
+                   if (up.supplier === rn.oldName) up.supplier = rn.newName;
+                   if (up.lines && Array.isArray(up.lines)) { up.lines = up.lines.map(l => l.account === rn.oldName ? { ...l, account: rn.newName } : l); }
+                });
+                return up;
+            });
+            if(setPurchasesDb) setPurchasesDb(updatedLocalPurchases);
+            localStorage.setItem('erp_purchases', JSON.stringify(updatedLocalPurchases));
+        } catch(e) {}
       }
 
-      alert('✅ Chart of Accounts Saved Successfully to Cloud!');
-    } catch (error) {
-      console.error("Error syncing accounts to Firebase:", error);
-      alert('⚠️ Saved locally, but cloud sync encountered an issue. Check your Firebase connection rules.');
-    } finally {
-      setIsSaving(false);
-    }
+      alert('✅ Chart of Accounts Saved & Historical Transactions Cascaded Successfully!');
+    } catch (error) { console.error("Error syncing accounts to Firebase:", error); alert('⚠️ Saved locally, but cloud sync encountered an issue. Check your Firebase connection rules.'); } finally { setIsSaving(false); }
   };
 
   const handleBackup = () => {
@@ -332,20 +291,11 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
   const sortedAccounts = [...localAccounts]
     .reduce((acc, current) => {
       const nameKey = String(current.name || '').trim().toLowerCase();
-      if (!nameKey) {
-        acc.push(current);
-      } else {
-        if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) {
-          acc.push(current);
-        }
-      }
-      return acc;
+      if (!nameKey) { acc.push(current); } else { if (!acc.some(a => String(a.name || '').trim().toLowerCase() === nameKey)) { acc.push(current); } } return acc;
     }, [])
     .sort((a, b) => { 
-      const nameA = String(a.name || ''); 
-      const nameB = String(b.name || ''); 
-      if (!nameA.trim()) return 1; 
-      if (!nameB.trim()) return -1; 
+      const nameA = String(a.name || ''); const nameB = String(b.name || ''); 
+      if (!nameA.trim()) return 1; if (!nameB.trim()) return -1; 
       return nameA.localeCompare(nameB); 
     });
 
