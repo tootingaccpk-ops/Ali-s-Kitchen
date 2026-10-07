@@ -203,16 +203,27 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
       for (const snap of querySnapshot.docs) { if (!processedFirebaseIds.has(snap.id)) { await deleteDoc(doc(db, "erp_accounts", snap.id)); } }
 
       if (renamesToCascade.length > 0) {
-        // Cascade Receipts Database
+        const isMatch = (val, oldName) => String(val || '').trim().toLowerCase() === String(oldName || '').trim().toLowerCase();
+
+        // Cascade Receipts Database (Includes strict deep scan of Journal Voucher lines)
         const receiptsSnap = await getDocs(collection(db, "erp_receipts"));
         receiptsSnap.forEach(async (docSnap) => {
            const data = docSnap.data(); let needsUpdate = false; let updatedData = { ...data };
            renamesToCascade.forEach(rn => {
-              if (updatedData.account === rn.oldName) { updatedData.account = rn.newName; needsUpdate = true; }
-              if (updatedData.bankName === rn.oldName) { updatedData.bankName = rn.newName; needsUpdate = true; }
-              if (updatedData.fromBank === rn.oldName) { updatedData.fromBank = rn.newName; needsUpdate = true; }
-              if (updatedData.toBank === rn.oldName) { updatedData.toBank = rn.newName; needsUpdate = true; }
-              if (updatedData.payee === rn.oldName) { updatedData.payee = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.account, rn.oldName)) { updatedData.account = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.bankName, rn.oldName)) { updatedData.bankName = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.fromBank, rn.oldName)) { updatedData.fromBank = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.toBank, rn.oldName)) { updatedData.toBank = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.payee, rn.oldName)) { updatedData.payee = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.debitAccount, rn.oldName)) { updatedData.debitAccount = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.creditAccount, rn.oldName)) { updatedData.creditAccount = rn.newName; needsUpdate = true; }
+              
+              if (updatedData.lines && Array.isArray(updatedData.lines)) {
+                 updatedData.lines = updatedData.lines.map(l => {
+                     if (isMatch(l.account, rn.oldName)) { needsUpdate = true; return { ...l, account: rn.newName }; }
+                     return l;
+                 });
+              }
            });
            if (needsUpdate) await updateDoc(doc(db, "erp_receipts", docSnap.id), updatedData);
         });
@@ -222,10 +233,10 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
         purchasesSnap.forEach(async (docSnap) => {
            const data = docSnap.data(); let needsUpdate = false; let updatedData = { ...data };
            renamesToCascade.forEach(rn => {
-              if (updatedData.supplier === rn.oldName) { updatedData.supplier = rn.newName; needsUpdate = true; }
+              if (isMatch(updatedData.supplier, rn.oldName)) { updatedData.supplier = rn.newName; needsUpdate = true; }
               if (updatedData.lines && Array.isArray(updatedData.lines)) {
                  updatedData.lines = updatedData.lines.map(l => {
-                     if (l.account === rn.oldName) { needsUpdate = true; return { ...l, account: rn.newName }; }
+                     if (isMatch(l.account, rn.oldName)) { needsUpdate = true; return { ...l, account: rn.newName }; }
                      return l;
                  });
               }
@@ -233,15 +244,21 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
            if (needsUpdate) await updateDoc(doc(db, "erp_purchases", docSnap.id), updatedData);
         });
 
+        // Sync Local State
         if (setReceiptsDb) {
             const updatedLocalReceipts = receiptsDb.map(r => {
                let ur = { ...r };
                renamesToCascade.forEach(rn => {
-                  if (ur.account === rn.oldName) ur.account = rn.newName;
-                  if (ur.bankName === rn.oldName) ur.bankName = rn.newName;
-                  if (ur.fromBank === rn.oldName) ur.fromBank = rn.newName;
-                  if (ur.toBank === rn.oldName) ur.toBank = rn.newName;
-                  if (ur.payee === rn.oldName) ur.payee = rn.newName;
+                  if (isMatch(ur.account, rn.oldName)) ur.account = rn.newName;
+                  if (isMatch(ur.bankName, rn.oldName)) ur.bankName = rn.newName;
+                  if (isMatch(ur.fromBank, rn.oldName)) ur.fromBank = rn.newName;
+                  if (isMatch(ur.toBank, rn.oldName)) ur.toBank = rn.newName;
+                  if (isMatch(ur.payee, rn.oldName)) ur.payee = rn.newName;
+                  if (isMatch(ur.debitAccount, rn.oldName)) ur.debitAccount = rn.newName;
+                  if (isMatch(ur.creditAccount, rn.oldName)) ur.creditAccount = rn.newName;
+                  if (ur.lines && Array.isArray(ur.lines)) {
+                      ur.lines = ur.lines.map(l => isMatch(l.account, rn.oldName) ? { ...l, account: rn.newName } : l);
+                  }
                });
                return ur;
             });
@@ -253,8 +270,8 @@ export default function SystemSetup({ accounts = [], setAccounts, categoriesMap 
             const updatedLocalPurchases = localPurchases.map(p => {
                 let up = { ...p };
                 renamesToCascade.forEach(rn => {
-                   if (up.supplier === rn.oldName) up.supplier = rn.newName;
-                   if (up.lines && Array.isArray(up.lines)) { up.lines = up.lines.map(l => l.account === rn.oldName ? { ...l, account: rn.newName } : l); }
+                   if (isMatch(up.supplier, rn.oldName)) up.supplier = rn.newName;
+                   if (up.lines && Array.isArray(up.lines)) { up.lines = up.lines.map(l => isMatch(l.account, rn.oldName) ? { ...l, account: rn.newName } : l); }
                 });
                 return up;
             });
