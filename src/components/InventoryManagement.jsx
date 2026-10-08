@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase'; 
 import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
-import { LayoutDashboard, Save, ChefHat, Trash2, FileSpreadsheet, FileText, BarChart3, Settings, PlusCircle, PackageOpen } from 'lucide-react';
+import { LayoutDashboard, Save, ChefHat, Trash2, FileSpreadsheet, FileText, BarChart3, Settings, PlusCircle, PackageOpen, Edit } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -37,6 +37,7 @@ export default function InventoryManagement() {
   const [salesDb, setSalesDb] = useState([]);
   
   // Forms & Modals
+  const [editingId, setEditingId] = useState(null);
   const [setupForm, setSetupForm] = useState({
     name: '', portionName: '', defaultYield: '', spicesCost: '',
     lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }]
@@ -177,6 +178,25 @@ export default function InventoryManagement() {
     return linesTotal + spicesTotal;
   }, [setupForm.lines, setupForm.spicesCost]);
 
+  const handleEditTemplate = (recipe) => {
+    setEditingId(recipe.id);
+    setSetupForm({
+      name: recipe.name || '',
+      portionName: recipe.portionName || recipe.name || '',
+      defaultYield: recipe.defaultYield || '',
+      spicesCost: recipe.spicesCost || '',
+      lines: recipe.ingredients && recipe.ingredients.length > 0 
+        ? recipe.ingredients.map((ing, i) => ({ id: Date.now() + i, ...ing })) 
+        : [{ id: Date.now(), ingredient: '', qty: '', rate: '' }]
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setSetupForm({ name: '', portionName: '', defaultYield: '', spicesCost: '', lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }] });
+  };
+
   const handleSaveTemplate = async (e) => {
     e.preventDefault();
     if (!setupForm.name.trim() || !setupForm.defaultYield) return alert("Recipe name and yield are required.");
@@ -187,23 +207,31 @@ export default function InventoryManagement() {
     const batchCost = setupFormSubtotal;
     const costPerPortion = batchCost / yieldNum;
 
-    const newTemplate = { 
+    const templateData = { 
       name: setupForm.name.trim(), 
-      portionName: setupForm.portionName.trim() || setupForm.name.trim(), // Defaults to batch name if left blank
+      portionName: setupForm.portionName.trim() || setupForm.name.trim(),
       batchCost: batchCost, 
       defaultYield: yieldNum,
       costPerPortion: costPerPortion,
       spicesCost: Number(setupForm.spicesCost) || 0,
-      ingredients: setupForm.lines.filter(l => l.ingredient.trim() !== ''),
-      openingQty: 0
+      ingredients: setupForm.lines.filter(l => l.ingredient.trim() !== '')
     };
 
     try {
-      const docRef = await addDoc(collection(db, "erp_recipes"), newTemplate);
-      setRecipesDb(prev => [...prev, { id: docRef.id, ...newTemplate }].sort((a,b) => a.name.localeCompare(b.name)));
-      setLocalOpeningStock(prev => ({ ...prev, [docRef.id]: 0 }));
-      alert("✅ Recipe Detailed Template Saved Successfully!");
-      setSetupForm({ name: '', portionName: '', defaultYield: '', spicesCost: '', lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }] });
+      if (editingId) {
+        // Update existing
+        await updateDoc(doc(db, "erp_recipes", editingId), templateData);
+        setRecipesDb(prev => prev.map(r => r.id === editingId ? { ...r, ...templateData } : r).sort((a,b) => a.name.localeCompare(b.name)));
+        alert("✅ Recipe Updated Successfully!");
+      } else {
+        // Create new
+        templateData.openingQty = 0;
+        const docRef = await addDoc(collection(db, "erp_recipes"), templateData);
+        setRecipesDb(prev => [...prev, { id: docRef.id, ...templateData }].sort((a,b) => a.name.localeCompare(b.name)));
+        setLocalOpeningStock(prev => ({ ...prev, [docRef.id]: 0 }));
+        alert("✅ Recipe Detailed Template Saved Successfully!");
+      }
+      handleCancelEdit();
     } catch (err) { alert("Error saving template."); }
   };
 
@@ -526,8 +554,8 @@ export default function InventoryManagement() {
           <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             
             <div style={{ flex: '1 1 450px', border: `1px solid ${sheetTheme.border}`, borderRadius: '12px', overflow: 'hidden', background: '#fff' }}>
-              <div style={{ background: '#f1f5f9', color: '#0f172a', padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>
-                ➕ Build Recipe Cost Calculator
+              <div style={{ background: editingId ? '#fef3c7' : '#f1f5f9', color: '#0f172a', padding: '18px 24px', fontWeight: '900', fontSize: '15px', borderBottom: `1px solid ${sheetTheme.border}` }}>
+                {editingId ? '✏️ Edit Recipe Details' : '➕ Build Recipe Cost Calculator'}
               </div>
               <form onSubmit={handleSaveTemplate} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ display: 'flex', gap: '16px' }}>
@@ -601,7 +629,16 @@ export default function InventoryManagement() {
                   </div>
                 </div>
 
-                <button type="submit" style={{ padding: '12px', background: '#0f172a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>Save Recipe Template</button>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', background: editingId ? '#d97706' : '#0f172a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
+                    {editingId ? 'Update Recipe Template' : 'Save Recipe Template'}
+                  </button>
+                  {editingId && (
+                    <button type="button" onClick={handleCancelEdit} style={{ flex: 1, padding: '12px', background: '#64748b', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
+                      Cancel Edit
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
 
@@ -612,20 +649,23 @@ export default function InventoryManagement() {
                   <tr>
                     <th style={{ padding: '12px 24px' }}>Recipe Details</th>
                     <th style={{ padding: '12px 24px', textAlign: 'right' }}>Cost / Portion</th>
-                    <th style={{ padding: '12px 24px', textAlign: 'center' }}></th>
+                    <th style={{ padding: '12px 24px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recipesDb.length === 0 ? <tr><td colSpan="3" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No templates saved.</td></tr> : 
                   recipesDb.map(item => (
-                    <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
+                    <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}`, background: editingId === item.id ? '#fef3c7' : '#fff' }}>
                       <td style={{ padding: '14px 24px' }}>
                         <div style={{ fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</div>
                         <div style={{ fontSize: '11px', color: '#0369a1', marginTop: '4px', fontWeight: '600' }}>Stock Name: {item.portionName || item.name}</div>
                       </td>
                       <td style={{ padding: '14px 24px', textAlign: 'right', fontSize: '14px', fontWeight: '800', color: '#059669' }}>£ {fmtMoney(item.costPerPortion)}</td>
                       <td style={{ padding: '14px 24px', textAlign: 'center' }}>
-                        <button onClick={() => handleDeleteTemplate(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} /></button>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          <button onClick={() => handleEditTemplate(item)} style={{ background: 'none', border: 'none', color: '#0284c7', cursor: 'pointer' }} title="Edit"><Edit size={16} /></button>
+                          <button onClick={() => handleDeleteTemplate(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }} title="Delete"><Trash2 size={16} /></button>
+                        </div>
                       </td>
                     </tr>
                   ))}
