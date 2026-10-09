@@ -39,8 +39,8 @@ export default function InventoryManagement() {
   // Forms & Modals
   const [editingId, setEditingId] = useState(null);
   const [setupForm, setSetupForm] = useState({
-    name: '', portionName: '', defaultYield: '', spicesCost: '',
-    lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }]
+    name: '', portionName: '', finishedUom: 'Portions', defaultYield: '', spicesCost: '',
+    lines: [{ id: Date.now(), ingredient: '', uom: '', qty: '', rate: '' }]
   });
   
   const [stockAsOfDate, setStockAsOfDate] = useState(getToday());
@@ -53,7 +53,7 @@ export default function InventoryManagement() {
   const [isSavingStock, setIsSavingStock] = useState(false);
   
   // Quick Add State
-  const [quickAddForm, setQuickAddForm] = useState({ name: '', cost: '', qty: '' });
+  const [quickAddForm, setQuickAddForm] = useState({ name: '', uom: 'Cans', cost: '', qty: '' });
 
   // Load Data
   useEffect(() => {
@@ -160,14 +160,14 @@ export default function InventoryManagement() {
   };
 
   const addRecipeLine = () => {
-    setSetupForm(prev => ({ ...prev, lines: [...prev.lines, { id: Date.now(), ingredient: '', qty: '', rate: '' }] }));
+    setSetupForm(prev => ({ ...prev, lines: [...prev.lines, { id: Date.now(), ingredient: '', uom: '', qty: '', rate: '' }] }));
   };
 
   const removeRecipeLine = (index) => {
     setSetupForm(prev => {
       const newLines = [...prev.lines];
       newLines.splice(index, 1);
-      if (newLines.length === 0) newLines.push({ id: Date.now(), ingredient: '', qty: '', rate: '' });
+      if (newLines.length === 0) newLines.push({ id: Date.now(), ingredient: '', uom: '', qty: '', rate: '' });
       return { ...prev, lines: newLines };
     });
   };
@@ -183,18 +183,19 @@ export default function InventoryManagement() {
     setSetupForm({
       name: recipe.name || '',
       portionName: recipe.portionName || recipe.name || '',
+      finishedUom: recipe.finishedUom || 'Portions',
       defaultYield: recipe.defaultYield || '',
       spicesCost: recipe.spicesCost || '',
       lines: recipe.ingredients && recipe.ingredients.length > 0 
-        ? recipe.ingredients.map((ing, i) => ({ id: Date.now() + i, ...ing })) 
-        : [{ id: Date.now(), ingredient: '', qty: '', rate: '' }]
+        ? recipe.ingredients.map((ing, i) => ({ id: Date.now() + i, uom: ing.uom || '', ...ing })) 
+        : [{ id: Date.now(), ingredient: '', uom: '', qty: '', rate: '' }]
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
     setEditingId(null);
-    setSetupForm({ name: '', portionName: '', defaultYield: '', spicesCost: '', lines: [{ id: Date.now(), ingredient: '', qty: '', rate: '' }] });
+    setSetupForm({ name: '', portionName: '', finishedUom: 'Portions', defaultYield: '', spicesCost: '', lines: [{ id: Date.now(), ingredient: '', uom: '', qty: '', rate: '' }] });
   };
 
   const handleSaveTemplate = async (e) => {
@@ -210,6 +211,7 @@ export default function InventoryManagement() {
     const templateData = { 
       name: setupForm.name.trim(), 
       portionName: setupForm.portionName.trim() || setupForm.name.trim(),
+      finishedUom: setupForm.finishedUom.trim() || 'Portions',
       batchCost: batchCost, 
       defaultYield: yieldNum,
       costPerPortion: costPerPortion,
@@ -271,6 +273,7 @@ export default function InventoryManagement() {
     const newItem = {
       name: quickAddForm.name.trim(),
       portionName: quickAddForm.name.trim(),
+      finishedUom: quickAddForm.uom.trim() || 'Units',
       batchCost: cost,
       defaultYield: 1,
       costPerPortion: cost,
@@ -284,7 +287,7 @@ export default function InventoryManagement() {
       const savedItem = { id: docRef.id, ...newItem };
       setRecipesDb(prev => [...prev, savedItem].sort((a,b) => a.name.localeCompare(b.name)));
       setLocalOpeningStock(prev => ({ ...prev, [docRef.id]: qty }));
-      setQuickAddForm({ name: '', cost: '', qty: '' });
+      setQuickAddForm({ name: '', uom: 'Cans', cost: '', qty: '' });
       alert("✅ New item instantly saved to stock!");
     } catch (err) {
       alert("Error adding item.");
@@ -319,25 +322,36 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error logging production."); }
   };
 
-  // --- EXPORT FUNCTIONS ---
+  // --- UNIVERSAL EXPORT FUNCTIONS ---
   const handleExportExcel = () => {
     let wsData = [];
     if (activeTab === 'dashboard') {
-      wsData.push(["Inventory Valuation Report", `As of: ${stockAsOfDate}`]);
-      wsData.push([]);
-      wsData.push(["Finished Item (Portion Name)", "Opening Qty", "Current Portions", "Static Cost/Portion (£)", "Total Asset Value (£)"]);
+      wsData.push(["Inventory Valuation Report", `As of: ${stockAsOfDate}`], []);
+      wsData.push(["Finished Item (Portion Name)", "UOM", "Opening Qty", "Current Qty", "Static Cost/Unit (£)", "Total Asset Value (£)"]);
       finishedGoodsStock.forEach(item => {
-        wsData.push([item.displayName, item.openingQty, item.currentQty, item.costPerPortion, Math.max(0, item.totalValue)]);
+        wsData.push([item.displayName, item.finishedUom || 'Portions', item.openingQty, item.currentQty, item.costPerPortion, Math.max(0, item.totalValue)]);
       });
     } else if (activeTab === 'reports') {
-      wsData.push(["COGS Analytics Report", `From: ${reportDates.startDate} To: ${reportDates.endDate}`]);
-      wsData.push([]);
+      wsData.push(["COGS Analytics Report", `From: ${reportDates.startDate} To: ${reportDates.endDate}`], []);
       wsData.push(["Date", "Selling Price (£)", "Food Cost (£)", "Difference (£)", "Ratio of Difference (%)"]);
       dailyReportsData.forEach(day => {
         wsData.push([day.date, day.revenue, day.cogs, day.grossProfit, day.foodCostPct]);
       });
-    } else {
-      wsData.push(["Export data not available for this tab."]);
+    } else if (activeTab === 'production') {
+      wsData.push(["Production Logs", `Generated: ${getToday()}`], []);
+      wsData.push(["Date", "Batch Cooked", "Yield Packed", "Total Batch Cost (£)"]);
+      productionDb.forEach(p => {
+        const rec = recipesDb.find(r => r.id === p.recipeId);
+        wsData.push([p.date, rec?.name || 'Unknown', p.portionsMade, p.totalBatchCost]);
+      });
+    } else if (activeTab === 'setup') {
+      wsData.push(["Master Recipe List", `Generated: ${getToday()}`], []);
+      wsData.push(["Kitchen Batch Name", "Finished Stock Name", "UOM", "Yield", "Cost per Unit (£)"]);
+      recipesDb.forEach(r => wsData.push([r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, r.costPerPortion]));
+    } else if (activeTab === 'opening') {
+      wsData.push(["Opening Stock Balances", `Generated: ${getToday()}`], []);
+      wsData.push(["Finished Item", "UOM", "Opening Qty"]);
+      recipesDb.forEach(r => wsData.push([r.portionName || r.name, r.finishedUom || 'Portions', r.openingQty]));
     }
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -349,24 +363,38 @@ export default function InventoryManagement() {
   const handleExportPDF = () => {
     const doc = new jsPDF('p', 'pt', 'a4');
     doc.setFont("helvetica", "bold");
+    let title = "";
+    let headers = [];
+    let data = [];
     
     if (activeTab === 'dashboard') {
-      doc.setFontSize(16);
-      doc.text(`Finished Goods Inventory (As of ${stockAsOfDate})`, 40, 40);
-      const headers = [['Finished Item (Portion Name)', 'Opening Qty', 'Current Portions', 'Cost/Portion', 'Asset Value']];
-      const data = finishedGoodsStock.map(item => [item.displayName, item.openingQty, item.currentQty, `£${fmtMoney(item.costPerPortion)}`, `£${fmtMoney(Math.max(0, item.totalValue))}`]);
-      autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] } });
+      title = `Finished Goods Inventory (As of ${stockAsOfDate})`;
+      headers = [['Finished Item', 'UOM', 'Opening Qty', 'Current Qty', 'Cost/Unit', 'Asset Value']];
+      data = finishedGoodsStock.map(item => [item.displayName, item.finishedUom || 'Portions', item.openingQty, item.currentQty, `£${fmtMoney(item.costPerPortion)}`, `£${fmtMoney(Math.max(0, item.totalValue))}`]);
     } else if (activeTab === 'reports') {
-      doc.setFontSize(16);
-      doc.text(`COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`, 40, 40);
-      const headers = [['Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
-      const data = dailyReportsData.map(day => [day.date, `£${fmtMoney(day.revenue)}`, `£${fmtMoney(day.cogs)}`, `£${fmtMoney(day.grossProfit)}`, `${fmtPct(day.foodCostPct)}`]);
-      autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [126, 34, 206] } });
-    } else {
-      doc.setFontSize(14);
-      doc.text(`Please switch to the Dashboard or Analytics tab to export a PDF.`, 40, 40);
+      title = `COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`;
+      headers = [['Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
+      data = dailyReportsData.map(day => [day.date, `£${fmtMoney(day.revenue)}`, `£${fmtMoney(day.cogs)}`, `£${fmtMoney(day.grossProfit)}`, `${fmtPct(day.foodCostPct)}`]);
+    } else if (activeTab === 'production') {
+      title = `Production Logs History`;
+      headers = [['Date', 'Batch Cooked', 'Yield Packed', 'Total Batch Cost']];
+      data = productionDb.map(p => {
+        const rec = recipesDb.find(r => r.id === p.recipeId);
+        return [p.date, rec?.name || 'Unknown', p.portionsMade, `£${fmtMoney(p.totalBatchCost)}`];
+      });
+    } else if (activeTab === 'setup') {
+      title = `Master Recipe Setup List`;
+      headers = [['Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
+      data = recipesDb.map(r => [r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, `£${fmtMoney(r.costPerPortion)}`]);
+    } else if (activeTab === 'opening') {
+      title = `Opening Stock Balances`;
+      headers = [['Finished Item', 'UOM', 'Opening Qty']];
+      data = recipesDb.map(r => [r.portionName || r.name, r.finishedUom || 'Portions', r.openingQty]);
     }
-    
+
+    doc.setFontSize(16);
+    doc.text(title, 40, 40);
+    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] } });
     doc.save(`Inventory_Report_${getToday()}.pdf`);
   };
 
@@ -394,7 +422,7 @@ export default function InventoryManagement() {
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '6px' }}>Actual Portions Packed (Yield)</label>
+                <label style={{ fontSize: '12px', fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '6px' }}>Actual Yield ({prodLog.recipe?.finishedUom || 'Portions'})</label>
                 <input type="number" step="any" value={prodLog.actualYield} onChange={e => setProdLog({...prodLog, actualYield: e.target.value})} style={{ width: '100%', padding: '14px', border: `2px solid #fdba74`, borderRadius: '6px', background: '#fffbeb', fontWeight: '900', fontSize: '18px', textAlign: 'center', boxSizing: 'border-box' }} required />
               </div>
 
@@ -447,19 +475,21 @@ export default function InventoryManagement() {
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
                   <tr>
                     <th style={{ padding: '14px 24px' }}>Finished Item (Portion Name)</th>
+                    <th style={{ padding: '14px 24px' }}>UOM</th>
                     <th style={{ padding: '14px 24px', textAlign: 'right' }}>Opening Qty</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Current Portions</th>
-                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Static Cost / Portion</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Current Qty</th>
+                    <th style={{ padding: '14px 24px', textAlign: 'right' }}>Static Cost / Unit</th>
                     <th style={{ padding: '14px 24px', textAlign: 'right' }}>Total Asset Value</th>
                   </tr>
                 </thead>
                 <tbody>
                   {finishedGoodsStock.length === 0 ? (
-                    <tr><td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '500' }}>No items in stock. Set opening balances or log batches.</td></tr>
+                    <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '500' }}>No items in stock. Set opening balances or log batches.</td></tr>
                   ) : (
                     finishedGoodsStock.map(item => (
                       <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
                         <td style={{ padding: '16px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.displayName}</td>
+                        <td style={{ padding: '16px 24px', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>{item.finishedUom || 'Portions'}</td>
                         <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#64748b' }}>{fmtQty(item.openingQty)}</td>
                         <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: item.currentQty < 0 ? '#dc2626' : (item.currentQty === 0 ? '#94a3b8' : '#059669') }}>{fmtQty(item.currentQty)}</td>
                         <td style={{ padding: '16px 24px', textAlign: 'right', fontSize: '14px', fontWeight: '600', color: '#475569' }}>£ {fmtMoney(item.costPerPortion)}</td>
@@ -492,7 +522,7 @@ export default function InventoryManagement() {
                     <span style={{ fontSize: '16px', fontWeight: '900', color: '#0f172a' }}>{recipe.name}</span>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: '8px' }}>
                       <span style={{ fontSize: '12px', fontWeight: '700', color: '#64748b', background: '#f1f5f9', padding: '4px 8px', borderRadius: '4px' }}>Cost: £{fmtMoney(recipe.batchCost)}</span>
-                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#ea580c', background: '#fff7ed', padding: '4px 8px', borderRadius: '4px' }}>Yield: {recipe.defaultYield}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#ea580c', background: '#fff7ed', padding: '4px 8px', borderRadius: '4px' }}>Yield: {recipe.defaultYield} {recipe.finishedUom || 'Portions'}</span>
                     </div>
                   </button>
                 ))}
@@ -563,17 +593,25 @@ export default function InventoryManagement() {
                     <label style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>Kitchen Batch Name</label>
                     <input type="text" value={setupForm.name} onChange={e => setSetupForm({...setupForm, name: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px' }} required placeholder="e.g. 10kg Biryani Pot" />
                   </div>
-                  <div style={{ flex: 1 }}>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <div style={{ flex: 2 }}>
                     <label style={{ fontSize: '12px', fontWeight: '800', color: '#0369a1', display: 'block', marginBottom: '6px' }}>Finished Stock Name</label>
                     <input type="text" value={setupForm.portionName} onChange={e => setSetupForm({...setupForm, portionName: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid #bae6fd`, background: '#f0f9ff', borderRadius: '6px' }} placeholder="e.g. Biryani Portion" />
                   </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#0369a1', display: 'block', marginBottom: '6px' }}>UOM</label>
+                    <input type="text" value={setupForm.finishedUom} onChange={e => setSetupForm({...setupForm, finishedUom: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid #bae6fd`, background: '#f0f9ff', borderRadius: '6px' }} placeholder="Portions" />
+                  </div>
                 </div>
-                
+
                 <div style={{ border: `1px solid ${sheetTheme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ background: '#f8fafc', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
                       <tr>
                         <th style={{ padding: '8px', textAlign: 'left', borderBottom: `1px solid ${sheetTheme.border}` }}>Raw Ingredient</th>
+                        <th style={{ padding: '8px', textAlign: 'left', borderBottom: `1px solid ${sheetTheme.border}` }}>UOM</th>
                         <th style={{ padding: '8px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>Qty</th>
                         <th style={{ padding: '8px', textAlign: 'right', borderBottom: `1px solid ${sheetTheme.border}` }}>Rate(£)</th>
                         <th style={{ padding: '8px', textAlign: 'center', borderBottom: `1px solid ${sheetTheme.border}` }}></th>
@@ -585,10 +623,13 @@ export default function InventoryManagement() {
                           <td style={{ padding: '6px' }}>
                             <input type="text" value={line.ingredient} onChange={e => handleRecipeLineChange(idx, 'ingredient', e.target.value)} placeholder="e.g. Chicken" style={{ width: '100%', padding: '6px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
                           </td>
-                          <td style={{ padding: '6px' }}>
+                          <td style={{ padding: '6px', width: '80px' }}>
+                            <input type="text" value={line.uom} onChange={e => handleRecipeLineChange(idx, 'uom', e.target.value)} placeholder="KG" style={{ width: '100%', padding: '6px', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
+                          </td>
+                          <td style={{ padding: '6px', width: '80px' }}>
                             <input type="number" step="any" value={line.qty} onChange={e => handleRecipeLineChange(idx, 'qty', e.target.value)} placeholder="0" style={{ width: '100%', padding: '6px', textAlign: 'right', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
                           </td>
-                          <td style={{ padding: '6px' }}>
+                          <td style={{ padding: '6px', width: '90px' }}>
                             <input type="number" step="any" value={line.rate} onChange={e => handleRecipeLineChange(idx, 'rate', e.target.value)} placeholder="0.00" style={{ width: '100%', padding: '6px', textAlign: 'right', border: `1px solid ${sheetTheme.border}`, borderRadius: '4px' }} />
                           </td>
                           <td style={{ padding: '6px', textAlign: 'center' }}>
@@ -597,7 +638,7 @@ export default function InventoryManagement() {
                         </tr>
                       ))}
                       <tr>
-                        <td colSpan="4" style={{ padding: '10px', background: '#f8fafc' }}>
+                        <td colSpan="5" style={{ padding: '10px', background: '#f8fafc' }}>
                           <button type="button" onClick={addRecipeLine} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#fff', color: '#0369a1', border: `1px dashed ${sheetTheme.border}`, borderRadius: '4px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}><PlusCircle size={14} /> Add Ingredient</button>
                         </td>
                       </tr>
@@ -611,7 +652,7 @@ export default function InventoryManagement() {
                     <input type="number" step="any" value={setupForm.spicesCost} onChange={e => setSetupForm({...setupForm, spicesCost: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px' }} placeholder="e.g. 5.00" />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>Portions Yield</label>
+                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>Yield ({setupForm.finishedUom || 'Portions'})</label>
                     <input type="number" step="any" value={setupForm.defaultYield} onChange={e => setSetupForm({...setupForm, defaultYield: e.target.value})} style={{ width: '100%', padding: '10px', border: `1px solid ${sheetTheme.border}`, borderRadius: '6px' }} required placeholder="e.g. 40" />
                   </div>
                 </div>
@@ -622,7 +663,7 @@ export default function InventoryManagement() {
                     <span style={{ fontSize: '14px', fontWeight: '900', color: '#14532d' }}>£{fmtMoney(setupFormSubtotal)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>Cost Per Portion:</span>
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>Cost Per Unit ({setupForm.finishedUom || 'Portions'}):</span>
                     <span style={{ fontSize: '14px', fontWeight: '900', color: '#14532d' }}>
                       £{setupForm.defaultYield ? fmtMoney(setupFormSubtotal / Number(setupForm.defaultYield)) : '0.00'}
                     </span>
@@ -648,7 +689,7 @@ export default function InventoryManagement() {
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', borderBottom: `1px solid ${sheetTheme.border}` }}>
                   <tr>
                     <th style={{ padding: '12px 24px' }}>Recipe Details</th>
-                    <th style={{ padding: '12px 24px', textAlign: 'right' }}>Cost / Portion</th>
+                    <th style={{ padding: '12px 24px', textAlign: 'right' }}>Cost / Unit</th>
                     <th style={{ padding: '12px 24px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
@@ -682,6 +723,7 @@ export default function InventoryManagement() {
             <div style={{ padding: '16px 24px', background: '#f0fdf4', borderBottom: `1px solid #bbf7d0`, display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ fontWeight: '800', color: '#166534', marginRight: '8px' }}>⚡ Quick Add (Drinks/Non-Cooked):</div>
               <input type="text" placeholder="Item Name (e.g. Water)" value={quickAddForm.name} onChange={e => setQuickAddForm({...quickAddForm, name: e.target.value})} style={{ flex: 1, minWidth: '150px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
+              <input type="text" placeholder="UOM (e.g. Cans)" value={quickAddForm.uom} onChange={e => setQuickAddForm({...quickAddForm, uom: e.target.value})} style={{ width: '120px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
               <input type="number" step="any" placeholder="Cost per Item (£)" value={quickAddForm.cost} onChange={e => setQuickAddForm({...quickAddForm, cost: e.target.value})} style={{ width: '140px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
               <input type="number" step="any" placeholder="Starting Qty" value={quickAddForm.qty} onChange={e => setQuickAddForm({...quickAddForm, qty: e.target.value})} style={{ width: '120px', padding: '10px 12px', border: '1px solid #bbf7d0', borderRadius: '6px', fontWeight: '600' }} />
               <button onClick={handleQuickAdd} style={{ padding: '10px 20px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '800' }}>+ Add to Stock</button>
@@ -697,17 +739,19 @@ export default function InventoryManagement() {
               <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f1f5f9', borderBottom: `1px solid ${sheetTheme.border}` }}>
                 <tr>
                   <th style={{ padding: '14px 24px' }}>Finished Item (Portion Name)</th>
-                  <th style={{ padding: '14px 24px', textAlign: 'right', width: '250px' }}>Opening Qty (Portions)</th>
+                  <th style={{ padding: '14px 24px' }}>UOM</th>
+                  <th style={{ padding: '14px 24px', textAlign: 'right', width: '250px' }}>Opening Qty</th>
                 </tr>
               </thead>
               <tbody>
                 {recipesDb.length === 0 ? (
-                  <tr><td colSpan="2" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>Please create recipes in the Setup tab first.</td></tr>
+                  <tr><td colSpan="3" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>Please create recipes in the Setup tab first.</td></tr>
                 ) : (
                   recipesDb.map(item => {
                     return (
                       <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
                         <td style={{ padding: '16px 24px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.portionName || item.name}</td>
+                        <td style={{ padding: '16px 24px', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>{item.finishedUom || 'Portions'}</td>
                         <td style={{ padding: '12px 24px', textAlign: 'right' }}>
                           <input 
                             type="number" 
