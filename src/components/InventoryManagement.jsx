@@ -258,34 +258,39 @@ export default function InventoryManagement() {
   const handleExportPDF = () => {
     const doc = new jsPDF('p', 'pt', 'a4');
     doc.setFont("helvetica", "bold");
-    let title = "", headers = [], data = [];
+    let title = "", headers = [], data = [], colStyles = {};
     if (activeTab === 'dashboard') {
       title = `Finished Goods Inventory (As of ${stockAsOfDate})`;
-      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty', 'Current Qty', 'Cost/Unit', 'Asset Value']];
+      headers = [['#', 'Finished Item', 'UOM', 'Opening\nQty', 'Current\nQty', 'Cost/Unit', 'Asset\nValue']];
       data = finishedGoodsStock.map((i, idx) => [idx + 1, i.displayName, i.finishedUom || 'Portions', i.openingQty, i.currentQty, `£${fmtMoney(i.costPerPortion)}`, `£${fmtMoney(Math.max(0, i.totalValue))}`]);
+      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'}, 6: {halign: 'right'} };
     } else if (activeTab === 'reports') {
       title = `COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`;
-      headers = [['S.No', 'Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
+      headers = [['#', 'Date', 'Selling\nPrice (£)', 'Food\nCost (£)', 'Difference\n(£)', 'Ratio\n(%)']];
       data = dailyReportsData.map((d, idx) => [idx + 1, d.date, `£${fmtMoney(d.revenue)}`, `£${fmtMoney(d.cogs)}`, `£${fmtMoney(d.grossProfit)}`, `${fmtPct(d.foodCostPct)}`]);
+      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'right'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'production') {
       title = `Production Logs History`;
-      headers = [['S.No', 'Date', 'Batch Cooked', 'Yield Packed', 'Total Batch Cost']];
+      headers = [['#', 'Date', 'Batch Cooked', 'Yield\nPacked', 'Total Batch\nCost']];
       data = productionDb.map((p, idx) => {
         const rec = recipesDb.find(r => r.id === p.recipeId);
         return [idx + 1, p.date, rec?.name || 'Unknown', p.portionsMade, `£${fmtMoney(p.totalBatchCost)}`];
       });
+      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'} };
     } else if (activeTab === 'setup') {
       title = `Master Recipe Setup List`;
-      headers = [['S.No', 'Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
+      headers = [['#', 'Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
       data = recipesDb.map((r, idx) => [idx + 1, r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, `£${fmtMoney(r.costPerPortion)}`]);
+      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'left'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'opening') {
       title = `Opening Stock Balances`;
-      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty']];
+      headers = [['#', 'Finished Item', 'UOM', 'Opening\nQty']];
       data = recipesDb.map((r, idx) => [idx + 1, r.portionName || r.name, r.finishedUom || 'Portions', r.openingQty]);
+      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'} };
     }
     doc.setFontSize(16);
     doc.text(title, 40, 40);
-    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] } });
+    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { halign: 'center', fillColor: [3, 105, 161] }, columnStyles: colStyles });
     doc.save(`Inventory_Report_${getToday()}.pdf`);
   };
 
@@ -373,8 +378,8 @@ export default function InventoryManagement() {
                         <td style={{ padding: '16px', textAlign: 'left', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>{item.finishedUom || 'Portions'}</td>
                         <td style={{ padding: '16px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#64748b' }}>{fmtQty(item.openingQty)}</td>
                         <td style={{ padding: '16px', textAlign: 'right', fontWeight: '900', fontSize: '16px', color: item.currentQty < 0 ? '#dc2626' : (item.currentQty === 0 ? '#94a3b8' : '#059669') }}>{fmtQty(item.currentQty)}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#475569' }}>£ {fmtMoney(item.costPerPortion)}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>£ {fmtMoney(Math.max(0, item.totalValue))}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontSize: '14px', fontWeight: '600', color: '#475569' }}>£ {fmtMoney(item.costPerPortion)}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>£ {fmtMoney(Math.max(0, item.totalValue))}</td>
                       </tr>
                     ))
                   )}
@@ -444,10 +449,10 @@ export default function InventoryManagement() {
                       <tr key={idx} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
                         <td style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
                         <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{day.date}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#059669' }}>£ {fmtMoney(day.revenue)}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: '700', fontSize: '14px', color: '#dc2626' }}>£ {fmtMoney(day.cogs)}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: '900', fontSize: '15px', color: '#0369a1' }}>£ {fmtMoney(day.grossProfit)}</td>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: '900', fontSize: '15px', color: day.foodCostPct > 35 ? '#dc2626' : '#059669' }}>{fmtPct(day.foodCostPct)}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#059669' }}>£ {fmtMoney(day.revenue)}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#dc2626' }}>£ {fmtMoney(day.cogs)}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '900', fontSize: '15px', color: '#0369a1' }}>£ {fmtMoney(day.grossProfit)}</td>
+                        <td style={{ padding: '16px', textAlign: 'right', fontWeight: '900', fontSize: '15px', color: day.foodCostPct > 35 ? '#dc2626' : '#059669' }}>{fmtPct(day.foodCostPct)}</td>
                       </tr>
                     ))
                   )}
@@ -578,7 +583,7 @@ export default function InventoryManagement() {
                         <div style={{ fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</div>
                         <div style={{ fontSize: '11px', color: '#0369a1', marginTop: '4px', fontWeight: '600' }}>Stock Name: {item.portionName || item.name}</div>
                       </td>
-                      <td style={{ padding: '16px', textAlign: 'left', fontSize: '14px', fontWeight: '800', color: '#059669' }}>£ {fmtMoney(item.costPerPortion)}</td>
+                      <td style={{ padding: '16px', textAlign: 'right', fontSize: '14px', fontWeight: '800', color: '#059669' }}>£ {fmtMoney(item.costPerPortion)}</td>
                       <td style={{ padding: '16px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                           <button onClick={() => handleEditTemplate(item)} style={{ background: 'none', border: 'none', color: '#0284c7', cursor: 'pointer' }} title="Edit"><Edit size={16} /></button>
