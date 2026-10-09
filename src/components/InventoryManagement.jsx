@@ -48,7 +48,6 @@ export default function InventoryManagement() {
   
   const [localOpeningStock, setLocalOpeningStock] = useState({});
   const [isSavingStock, setIsSavingStock] = useState(false);
-  
   const [quickAddForm, setQuickAddForm] = useState({ name: '', uom: 'Cans', cost: '', qty: '' });
 
   useEffect(() => {
@@ -208,6 +207,12 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error adding item."); }
   };
 
+  // RESTORED PRODUCTION MODAL FUNCTION
+  const openProductionModal = (recipe) => {
+    setProdLog({ date: getToday(), recipe: recipe, actualYield: recipe.defaultYield });
+    setShowProductionModal(true);
+  };
+
   const handleLogProduction = async (e) => {
     e.preventDefault();
     if (!prodLog.recipe || !prodLog.actualYield) return;
@@ -261,36 +266,37 @@ export default function InventoryManagement() {
     let title = "", headers = [], data = [], colStyles = {};
     if (activeTab === 'dashboard') {
       title = `Finished Goods Inventory (As of ${stockAsOfDate})`;
-      headers = [['#', 'Finished Item', 'UOM', 'Opening\nQty', 'Current\nQty', 'Cost/Unit', 'Asset\nValue']];
+      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty', 'Current Qty', 'Cost/Unit', 'Asset Value']];
       data = finishedGoodsStock.map((i, idx) => [idx + 1, i.displayName, i.finishedUom || 'Portions', i.openingQty, i.currentQty, `£${fmtMoney(i.costPerPortion)}`, `£${fmtMoney(Math.max(0, i.totalValue))}`]);
-      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'}, 6: {halign: 'right'} };
+      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 60}, 3: {halign: 'right', cellWidth: 70}, 4: {halign: 'right', cellWidth: 70}, 5: {halign: 'right', cellWidth: 70}, 6: {halign: 'right', cellWidth: 80} };
     } else if (activeTab === 'reports') {
       title = `COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`;
-      headers = [['#', 'Date', 'Selling\nPrice (£)', 'Food\nCost (£)', 'Difference\n(£)', 'Ratio\n(%)']];
+      headers = [['S.No', 'Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
       data = dailyReportsData.map((d, idx) => [idx + 1, d.date, `£${fmtMoney(d.revenue)}`, `£${fmtMoney(d.cogs)}`, `£${fmtMoney(d.grossProfit)}`, `${fmtPct(d.foodCostPct)}`]);
-      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'right'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
+      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'right'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'production') {
       title = `Production Logs History`;
-      headers = [['#', 'Date', 'Batch Cooked', 'Yield\nPacked', 'Total Batch\nCost']];
+      headers = [['S.No', 'Date', 'Batch Cooked', 'Yield Packed', 'Total Batch Cost']];
       data = productionDb.map((p, idx) => {
         const rec = recipesDb.find(r => r.id === p.recipeId);
         return [idx + 1, p.date, rec?.name || 'Unknown', p.portionsMade, `£${fmtMoney(p.totalBatchCost)}`];
       });
-      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'} };
+      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'} };
     } else if (activeTab === 'setup') {
       title = `Master Recipe Setup List`;
-      headers = [['#', 'Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
+      headers = [['S.No', 'Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
       data = recipesDb.map((r, idx) => [idx + 1, r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, `£${fmtMoney(r.costPerPortion)}`]);
-      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'left'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
+      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'left'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'opening') {
       title = `Opening Stock Balances`;
-      headers = [['#', 'Finished Item', 'UOM', 'Opening\nQty']];
+      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty']];
       data = recipesDb.map((r, idx) => [idx + 1, r.portionName || r.name, r.finishedUom || 'Portions', r.openingQty]);
-      colStyles = { 0: {halign: 'left'}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'} };
+      colStyles = { 0: {halign: 'center', cellWidth: 50}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 80}, 3: {halign: 'right', cellWidth: 100} };
     }
     doc.setFontSize(16);
     doc.text(title, 40, 40);
-    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { halign: 'center', fillColor: [3, 105, 161] }, columnStyles: colStyles });
+    // Removed headStyles halign: 'center' so headers automatically inherit the strict Left/Right alignment of their columns.
+    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] }, columnStyles: colStyles });
     doc.save(`Inventory_Report_${getToday()}.pdf`);
   };
 
@@ -358,13 +364,13 @@ export default function InventoryManagement() {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
                   <tr>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '40px' }}>#</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Finished Item</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>UOM</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '80px' }}>Opening<br/>Qty</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '80px' }}>Current<br/>Qty</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Static Cost<br/>/ Unit</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Total Asset<br/>Value</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'left' }}>Finished Item</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'left', width: '80px' }}>UOM</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '100px' }}>Opening Qty</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '100px' }}>Current Qty</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '110px' }}>Cost / Unit</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '120px' }}>Asset Value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -373,7 +379,7 @@ export default function InventoryManagement() {
                   ) : (
                     finishedGoodsStock.map((item, idx) => (
                       <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
+                        <td style={{ padding: '16px', textAlign: 'center', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
                         <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.displayName}</td>
                         <td style={{ padding: '16px', textAlign: 'left', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>{item.finishedUom || 'Portions'}</td>
                         <td style={{ padding: '16px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#64748b' }}>{fmtQty(item.openingQty)}</td>
@@ -433,12 +439,12 @@ export default function InventoryManagement() {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f8fafc', borderBottom: `2px solid ${sheetTheme.border}` }}>
                   <tr>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '40px' }}>#</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Date</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Selling<br/>Price (£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Food<br/>Cost (£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Difference<br/>(£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Ratio of<br/>Difference (%)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'left' }}>Date</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Selling Price (£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Food Cost (£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Difference (£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Ratio (%)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -447,7 +453,7 @@ export default function InventoryManagement() {
                   ) : (
                     dailyReportsData.map((day, idx) => (
                       <tr key={idx} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
-                        <td style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
+                        <td style={{ padding: '16px', textAlign: 'center', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
                         <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{day.date}</td>
                         <td style={{ padding: '16px', textAlign: 'right', fontWeight: '800', fontSize: '14px', color: '#059669' }}>£ {fmtMoney(day.revenue)}</td>
                         <td style={{ padding: '16px', textAlign: 'right', fontWeight: '700', fontSize: '14px', color: '#dc2626' }}>£ {fmtMoney(day.cogs)}</td>
@@ -490,10 +496,10 @@ export default function InventoryManagement() {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ background: '#f8fafc', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
                       <tr>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Raw Ingredient</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>UOM</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Qty</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Rate(£)</th>
+                        <th style={{ padding: '8px', textAlign: 'left' }}>Raw Ingredient</th>
+                        <th style={{ padding: '8px', textAlign: 'left' }}>UOM</th>
+                        <th style={{ padding: '8px', textAlign: 'right' }}>Qty</th>
+                        <th style={{ padding: '8px', textAlign: 'right' }}>Rate(£)</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}></th>
                       </tr>
                     </thead>
@@ -568,9 +574,9 @@ export default function InventoryManagement() {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', borderBottom: `1px solid ${sheetTheme.border}` }}>
                   <tr>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '40px' }}>#</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Recipe Details</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Cost /<br/>Unit</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'left' }}>Recipe Details</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Cost / Unit</th>
                     <th style={{ padding: '14px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
@@ -578,7 +584,7 @@ export default function InventoryManagement() {
                   {recipesDb.length === 0 ? <tr><td colSpan="4" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No templates saved.</td></tr> : 
                   recipesDb.map((item, idx) => (
                     <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}`, background: editingId === item.id ? '#fef3c7' : '#fff' }}>
-                      <td style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
+                      <td style={{ padding: '16px', textAlign: 'center', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
                       <td style={{ padding: '16px', textAlign: 'left' }}>
                         <div style={{ fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.name}</div>
                         <div style={{ fontSize: '11px', color: '#0369a1', marginTop: '4px', fontWeight: '600' }}>Stock Name: {item.portionName || item.name}</div>
@@ -616,10 +622,10 @@ export default function InventoryManagement() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', background: '#f1f5f9', borderBottom: `1px solid ${sheetTheme.border}` }}>
                 <tr>
-                  <th style={{ padding: '14px 16px', textAlign: 'center', width: '40px' }}>#</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'center' }}>Finished Item (Portion Name)</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'center' }}>UOM</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '120px' }}>Opening<br/>Qty</th>
+                  <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
+                  <th style={{ padding: '14px 16px', textAlign: 'left' }}>Finished Item (Portion Name)</th>
+                  <th style={{ padding: '14px 16px', textAlign: 'left', width: '100px' }}>UOM</th>
+                  <th style={{ padding: '14px 16px', textAlign: 'right', width: '120px' }}>Opening Qty</th>
                 </tr>
               </thead>
               <tbody>
@@ -628,7 +634,7 @@ export default function InventoryManagement() {
                 ) : (
                   recipesDb.map((item, idx) => (
                     <tr key={item.id} style={{ borderBottom: `1px solid ${sheetTheme.border}` }}>
-                      <td style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
+                      <td style={{ padding: '16px', textAlign: 'center', fontWeight: 'bold', color: '#64748b' }}>{idx + 1}</td>
                       <td style={{ padding: '16px', textAlign: 'left', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>{item.portionName || item.name}</td>
                       <td style={{ padding: '16px', textAlign: 'left', fontSize: '13px', color: '#64748b', fontWeight: '600' }}>{item.finishedUom || 'Portions'}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'right' }}>
@@ -659,4 +665,3 @@ export default function InventoryManagement() {
     </div>
   );
 }
-// END OF FILE
