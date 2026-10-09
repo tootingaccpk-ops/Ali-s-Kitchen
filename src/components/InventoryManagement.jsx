@@ -48,6 +48,7 @@ export default function InventoryManagement() {
   
   const [localOpeningStock, setLocalOpeningStock] = useState({});
   const [isSavingStock, setIsSavingStock] = useState(false);
+  
   const [quickAddForm, setQuickAddForm] = useState({ name: '', uom: 'Cans', cost: '', qty: '' });
 
   useEffect(() => {
@@ -207,7 +208,6 @@ export default function InventoryManagement() {
     } catch (err) { alert("Error adding item."); }
   };
 
-  // RESTORED PRODUCTION MODAL FUNCTION
   const openProductionModal = (recipe) => {
     setProdLog({ date: getToday(), recipe: recipe, actualYield: recipe.defaultYield });
     setShowProductionModal(true);
@@ -246,9 +246,20 @@ export default function InventoryManagement() {
         wsData.push([idx + 1, p.date, rec?.name || 'Unknown', p.portionsMade, p.totalBatchCost]);
       });
     } else if (activeTab === 'setup') {
-      wsData.push(["Master Recipe List", `Generated: ${getToday()}`], []);
-      wsData.push(["S.No", "Kitchen Batch Name", "Finished Stock Name", "UOM", "Yield", "Cost per Unit (£)"]);
-      recipesDb.forEach((r, idx) => wsData.push([idx + 1, r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, r.costPerPortion]));
+      wsData.push(["Detailed Recipe Cost Breakdown", `Generated: ${getToday()}`], []);
+      wsData.push(["Recipe Name", "Component", "UOM", "Qty", "Rate (£)", "Line Total (£)"]);
+      recipesDb.forEach((r) => {
+        wsData.push([r.name, "--- INGREDIENTS ---", "", "", "", ""]);
+        if(r.ingredients) {
+          r.ingredients.forEach(ing => {
+            wsData.push(["", ing.ingredient, ing.uom || '', ing.qty, ing.rate, (Number(ing.qty)*Number(ing.rate)).toFixed(2)]);
+          });
+        }
+        wsData.push(["", "Spices / Oil (Flat)", "", "", "", Number(r.spicesCost || 0).toFixed(2)]);
+        wsData.push(["", "TOTAL BATCH COST", "", "", "", Number(r.batchCost).toFixed(2)]);
+        wsData.push(["", `COST PER UNIT (${r.finishedUom || 'Portions'})`, "", "", "", Number(r.costPerPortion).toFixed(2)]);
+        wsData.push(["", "", "", "", "", ""]); // Blank spacer row
+      });
     } else if (activeTab === 'opening') {
       wsData.push(["Opening Stock Balances", `Generated: ${getToday()}`], []);
       wsData.push(["S.No", "Finished Item", "UOM", "Opening Qty"]);
@@ -266,37 +277,47 @@ export default function InventoryManagement() {
     let title = "", headers = [], data = [], colStyles = {};
     if (activeTab === 'dashboard') {
       title = `Finished Goods Inventory (As of ${stockAsOfDate})`;
-      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty', 'Current Qty', 'Cost/Unit', 'Asset Value']];
+      headers = [['S.No', 'Finished Item', 'UOM', 'Opening\nQty', 'Current\nQty', 'Cost/Unit', 'Asset\nValue']];
       data = finishedGoodsStock.map((i, idx) => [idx + 1, i.displayName, i.finishedUom || 'Portions', i.openingQty, i.currentQty, `£${fmtMoney(i.costPerPortion)}`, `£${fmtMoney(Math.max(0, i.totalValue))}`]);
-      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 60}, 3: {halign: 'right', cellWidth: 70}, 4: {halign: 'right', cellWidth: 70}, 5: {halign: 'right', cellWidth: 70}, 6: {halign: 'right', cellWidth: 80} };
+      colStyles = { 0: {halign: 'left', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 60}, 3: {halign: 'right', cellWidth: 70}, 4: {halign: 'right', cellWidth: 70}, 5: {halign: 'right', cellWidth: 70}, 6: {halign: 'right', cellWidth: 80} };
     } else if (activeTab === 'reports') {
       title = `COGS Analytics (${reportDates.startDate} to ${reportDates.endDate})`;
-      headers = [['S.No', 'Date', 'Selling Price (£)', 'Food Cost (£)', 'Difference (£)', 'Ratio (%)']];
+      headers = [['S.No', 'Date', 'Selling\nPrice (£)', 'Food\nCost (£)', 'Difference\n(£)', 'Ratio\n(%)']];
       data = dailyReportsData.map((d, idx) => [idx + 1, d.date, `£${fmtMoney(d.revenue)}`, `£${fmtMoney(d.cogs)}`, `£${fmtMoney(d.grossProfit)}`, `${fmtPct(d.foodCostPct)}`]);
-      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'right'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
+      colStyles = { 0: {halign: 'left', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'right'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'production') {
       title = `Production Logs History`;
-      headers = [['S.No', 'Date', 'Batch Cooked', 'Yield Packed', 'Total Batch Cost']];
+      headers = [['S.No', 'Date', 'Batch Cooked', 'Yield\nPacked', 'Total Batch\nCost']];
       data = productionDb.map((p, idx) => {
         const rec = recipesDb.find(r => r.id === p.recipeId);
         return [idx + 1, p.date, rec?.name || 'Unknown', p.portionsMade, `£${fmtMoney(p.totalBatchCost)}`];
       });
-      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'} };
+      colStyles = { 0: {halign: 'left', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'} };
     } else if (activeTab === 'setup') {
-      title = `Master Recipe Setup List`;
-      headers = [['S.No', 'Kitchen Batch Name', 'Finished Stock Name', 'UOM', 'Yield', 'Cost/Unit']];
-      data = recipesDb.map((r, idx) => [idx + 1, r.name, r.portionName || r.name, r.finishedUom || 'Portions', r.defaultYield, `£${fmtMoney(r.costPerPortion)}`]);
-      colStyles = { 0: {halign: 'center', cellWidth: 40}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'left'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
+      title = `Detailed Recipe Cost Breakdown`;
+      headers = [['Recipe Name', 'Component', 'UOM', 'Qty', 'Rate', 'Line Total']];
+      recipesDb.forEach((r) => {
+        data.push([r.name, '--- INGREDIENTS ---', '', '', '', '']);
+        if (r.ingredients) {
+          r.ingredients.forEach(ing => {
+            data.push(['', ing.ingredient, ing.uom || '', ing.qty, `£${fmtMoney(ing.rate)}`, `£${fmtMoney(Number(ing.qty)*Number(ing.rate))}`]);
+          });
+        }
+        data.push(['', 'Spices / Oil (Flat)', '', '', '', `£${fmtMoney(r.spicesCost || 0)}`]);
+        data.push(['', 'TOTAL BATCH COST', '', '', '', `£${fmtMoney(r.batchCost)}`]);
+        data.push(['', `COST PER UNIT (${r.finishedUom || 'Portions'})`, '', '', '', `£${fmtMoney(r.costPerPortion)}`]);
+        data.push(['', '', '', '', '', '']); // Spacer
+      });
+      colStyles = { 0: {halign: 'left', fontStyle: 'bold', cellWidth: 120}, 1: {halign: 'left'}, 2: {halign: 'left'}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'} };
     } else if (activeTab === 'opening') {
       title = `Opening Stock Balances`;
-      headers = [['S.No', 'Finished Item', 'UOM', 'Opening Qty']];
+      headers = [['S.No', 'Finished Item', 'UOM', 'Opening\nQty']];
       data = recipesDb.map((r, idx) => [idx + 1, r.portionName || r.name, r.finishedUom || 'Portions', r.openingQty]);
-      colStyles = { 0: {halign: 'center', cellWidth: 50}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 80}, 3: {halign: 'right', cellWidth: 100} };
+      colStyles = { 0: {halign: 'left', cellWidth: 50}, 1: {halign: 'left'}, 2: {halign: 'left', cellWidth: 80}, 3: {halign: 'right', cellWidth: 100} };
     }
     doc.setFontSize(16);
     doc.text(title, 40, 40);
-    // Removed headStyles halign: 'center' so headers automatically inherit the strict Left/Right alignment of their columns.
-    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { fillColor: [3, 105, 161] }, columnStyles: colStyles });
+    autoTable(doc, { startY: 60, head: headers, body: data, headStyles: { halign: 'center', fillColor: [3, 105, 161] }, columnStyles: colStyles });
     doc.save(`Inventory_Report_${getToday()}.pdf`);
   };
 
@@ -367,10 +388,10 @@ export default function InventoryManagement() {
                     <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
                     <th style={{ padding: '14px 16px', textAlign: 'left' }}>Finished Item</th>
                     <th style={{ padding: '14px 16px', textAlign: 'left', width: '80px' }}>UOM</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '100px' }}>Opening Qty</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '100px' }}>Current Qty</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '110px' }}>Cost / Unit</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right', width: '120px' }}>Asset Value</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '100px' }}>Opening<br/>Qty</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '100px' }}>Current<br/>Qty</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '110px' }}>Static Cost<br/>/ Unit</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '120px' }}>Total Asset<br/>Value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -441,10 +462,10 @@ export default function InventoryManagement() {
                   <tr>
                     <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
                     <th style={{ padding: '14px 16px', textAlign: 'left' }}>Date</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Selling Price (£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Food Cost (£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Difference (£)</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Ratio (%)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Selling<br/>Price (£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Food<br/>Cost (£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Difference<br/>(£)</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Ratio of<br/>Difference (%)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -498,8 +519,8 @@ export default function InventoryManagement() {
                       <tr>
                         <th style={{ padding: '8px', textAlign: 'left' }}>Raw Ingredient</th>
                         <th style={{ padding: '8px', textAlign: 'left' }}>UOM</th>
-                        <th style={{ padding: '8px', textAlign: 'right' }}>Qty</th>
-                        <th style={{ padding: '8px', textAlign: 'right' }}>Rate(£)</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Qty</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Rate(£)</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}></th>
                       </tr>
                     </thead>
@@ -576,7 +597,7 @@ export default function InventoryManagement() {
                   <tr>
                     <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
                     <th style={{ padding: '14px 16px', textAlign: 'left' }}>Recipe Details</th>
-                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Cost / Unit</th>
+                    <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3' }}>Cost /<br/>Unit</th>
                     <th style={{ padding: '14px 16px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
@@ -625,7 +646,7 @@ export default function InventoryManagement() {
                   <th style={{ padding: '14px 16px', textAlign: 'center', width: '50px' }}>S.No</th>
                   <th style={{ padding: '14px 16px', textAlign: 'left' }}>Finished Item (Portion Name)</th>
                   <th style={{ padding: '14px 16px', textAlign: 'left', width: '100px' }}>UOM</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'right', width: '120px' }}>Opening Qty</th>
+                  <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'normal', lineHeight: '1.3', width: '120px' }}>Opening<br/>Qty</th>
                 </tr>
               </thead>
               <tbody>
