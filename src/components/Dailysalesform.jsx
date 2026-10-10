@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { doc, writeBatch, getDocs, collection, query, where } from "firebase/firestore";
 import { db as firebaseDb } from "../firebase"; 
 import { PlusCircle, Trash2 } from 'lucide-react';
@@ -25,6 +25,8 @@ const fmtMoney = (n) => {
   return num.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const fmtQty = (n) => Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 const initialFormState = {
   date: getToday(),
   cashGross: '', cashRefund: '',
@@ -35,7 +37,7 @@ const initialFormState = {
   collections: '', safeBox: '', safeBoxDate: '', physicalTill: '', tillVarReason: '',
   tillSalesGross: '', tillSalesRefund: '', salesVarReason: '',
   vatAmount: '',
-  pmix: [{ id: Date.now(), recipeId: '', qtySold: '' }] // Product Mix for Auto-Deduction
+  pmix: [{ id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' }] 
 };
 
 const sheetTheme = {
@@ -94,26 +96,36 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
   const activeDb = salesDb.length > 0 ? salesDb : db;
   const [formData, setFormData] = useState(initialFormState);
   const [originalDate, setOriginalDate] = useState(null);
+  
   const [recipesDb, setRecipesDb] = useState([]);
+  const [productionDb, setProductionDb] = useState([]);
+  
   const dateInputRef = useRef(null);
 
   useEffect(() => {
-    const fetchRecipes = async () => {
+    const fetchData = async () => {
       try {
-        const snap = await getDocs(collection(firebaseDb, "erp_recipes"));
-        const loaded = [];
-        snap.forEach(d => loaded.push({ id: d.id, ...d.data() }));
-        setRecipesDb(loaded.sort((a,b) => a.name.localeCompare(b.name)));
+        const [recipeSnap, prodSnap] = await Promise.all([
+          getDocs(collection(firebaseDb, "erp_recipes")),
+          getDocs(collection(firebaseDb, "erp_production_logs"))
+        ]);
+        
+        const loadedRecipes = [];
+        recipeSnap.forEach(d => loadedRecipes.push({ id: d.id, ...d.data() }));
+        setRecipesDb(loadedRecipes.sort((a,b) => a.name.localeCompare(b.name)));
+
+        const loadedProd = [];
+        prodSnap.forEach(d => loadedProd.push({ id: d.id, ...d.data() }));
+        setProductionDb(loadedProd);
       } catch (e) {
-        console.error("Failed to load recipes", e);
+        console.error("Failed to load recipes and production", e);
       }
     };
-    fetchRecipes();
+    fetchData();
 
     const migrateToFirebase = async () => {
       const localData = JSON.parse(localStorage.getItem('erp_sales_db'));
       const isMigrated = localStorage.getItem('erp_sales_migrated');
-      
       if (localData && Array.isArray(localData) && localData.length > 0 && !isMigrated) {
         try {
           const batch = writeBatch(firebaseDb);
@@ -123,13 +135,33 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
           });
           await batch.commit();
           localStorage.setItem('erp_sales_migrated', 'true');
-        } catch (error) {
-          console.error("Migration failed: ", error);
-        }
+        } catch (error) { console.error("Migration failed: ", error); }
       }
     };
     migrateToFirebase();
   }, []);
+
+  // Compute Live Stock for Balance Badges
+  const finishedGoodsStock = useMemo(() => {
+    const stockMap = {};
+    recipesDb.forEach(rec => {
+      stockMap[rec.id] = { ...rec, totalProduced: 0, totalSold: 0, openingQty: Number(rec.openingQty) || 0 };
+    });
+    productionDb.filter(p => p.date <= formData.date).forEach(prod => {
+      if (stockMap[prod.recipeId]) stockMap[prod.recipeId].totalProduced += Number(prod.portionsMade) || 0;
+    });
+    // Deduct past sales prior to the form date so user sees the starting balance of the day
+    activeDb.filter(s => s.date < formData.date).forEach(sale => {
+      if (sale.pmix) sale.pmix.forEach(p => { 
+        const rId = p.recipeId || recipesDb.find(r=>r.name === p.name)?.id;
+        if (rId && stockMap[rId]) stockMap[rId].totalSold += Number(p.qtySold) || 0; 
+      });
+    });
+    return Object.values(stockMap).map(item => {
+      const currentQty = item.openingQty + item.totalProduced - item.totalSold;
+      return { ...item, currentQty, displayName: item.portionName || item.name };
+    });
+  }, [recipesDb, productionDb, activeDb, formData.date]);
 
   const getOpeningTillForDate = (dateStr, currentDb = activeDb) => {
     try {
@@ -150,13 +182,20 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     const existing = activeDb.find(r => toDateNum(r.date) === targetNum);
     
     if (existing) {
-       setFormData({ ...initialFormState, ...existing, pmix: existing.pmix || [{ id: Date.now(), recipeId: '', qtySold: '' }], date: targetDate });
+       const existingPmix = (existing.pmix || []).map(p => ({
+         ...p, 
+         name: p.name !== undefined ? p.name : (recipesDb.find(r => r.id === p.recipeId)?.name || ''),
+         price: p.price || ''
+       }));
+       if(existingPmix.length === 0) existingPmix.push({ id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' });
+       
+       setFormData({ ...initialFormState, ...existing, pmix: existingPmix, date: targetDate });
        setOriginalDate(existing.date);
     } else {
        setFormData(prev => ({ ...prev, date: targetDate, openingTill: getOpeningTillForDate(targetDate) }));
        setOriginalDate(null);
     }
-  }, [editDate, activeDb]); 
+  }, [editDate, activeDb, recipesDb]); 
 
   const handleChange = (e) => {
     const { name, value, type } = e.target;
@@ -181,14 +220,14 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
   };
 
   const addPmixLine = () => {
-    setFormData(prev => ({ ...prev, pmix: [...prev.pmix, { id: Date.now(), recipeId: '', qtySold: '' }] }));
+    setFormData(prev => ({ ...prev, pmix: [...prev.pmix, { id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' }] }));
   };
 
   const removePmixLine = (index) => {
     setFormData(prev => {
       const newPmix = [...prev.pmix];
       newPmix.splice(index, 1);
-      if (newPmix.length === 0) newPmix.push({ id: Date.now(), recipeId: '', qtySold: '' });
+      if (newPmix.length === 0) newPmix.push({ id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' });
       return { ...prev, pmix: newPmix };
     });
   };
@@ -208,7 +247,14 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
         return;
       }
       if (window.confirm(`Data already exists for ${value}. Load it to edit?`)) {
-        setFormData({ ...initialFormState, ...existing, pmix: existing.pmix || [{ id: Date.now(), recipeId: '', qtySold: '' }], date: value });
+        const existingPmix = (existing.pmix || []).map(p => ({
+          ...p, 
+          name: p.name !== undefined ? p.name : (recipesDb.find(r => r.id === p.recipeId)?.name || ''),
+          price: p.price || ''
+        }));
+        if(existingPmix.length === 0) existingPmix.push({ id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' });
+
+        setFormData({ ...initialFormState, ...existing, pmix: existingPmix, date: value });
         setOriginalDate(existing.date);
         return;
       }
@@ -230,7 +276,14 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     if (existing) {
       if (originalDate && toDateNum(existing.date) === toDateNum(originalDate)) return;
       if(window.confirm(`Data already exists for ${value}. Load it to edit?`)) {
-        setFormData({ ...initialFormState, ...existing, pmix: existing.pmix || [{ id: Date.now(), recipeId: '', qtySold: '' }], date: value });
+        const existingPmix = (existing.pmix || []).map(p => ({
+          ...p, 
+          name: p.name !== undefined ? p.name : (recipesDb.find(r => r.id === p.recipeId)?.name || ''),
+          price: p.price || ''
+        }));
+        if(existingPmix.length === 0) existingPmix.push({ id: Date.now(), recipeId: '', name: '', qtySold: '', price: '' });
+
+        setFormData({ ...initialFormState, ...existing, pmix: existingPmix, date: value });
         setOriginalDate(existing.date);
         return;
       }
@@ -254,16 +307,55 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const batch = writeBatch(firebaseDb);
     const targetNum = toDateNum(formData.date);
-    let updatedDb;
     
+    // Process On-the-Fly PMIX Recipe Creation
+    const processedPmix = [];
+    const localRecipes = [...recipesDb];
+    for (const p of formData.pmix) {
+      const pName = p.name !== undefined ? p.name : (localRecipes.find(r => r.id === p.recipeId)?.name || '');
+      if (!pName.trim() && !p.recipeId) continue; // Skip empty rows
+      
+      let rId = p.recipeId;
+      let rec = localRecipes.find(r => r.id === rId);
+      
+      // Attempt lookup by name if no exact ID
+      if (!rec && pName) {
+        rec = localRecipes.find(r => r.name.toLowerCase() === pName.trim().toLowerCase() || (r.portionName && r.portionName.toLowerCase() === pName.trim().toLowerCase()));
+      }
+
+      // If it absolutely doesn't exist, create it to allow negative overselling
+      if (rec) {
+        rId = rec.id;
+      } else {
+        const newItem = {
+          name: pName.trim(), portionName: pName.trim(), finishedUom: 'Units',
+          batchCost: 0, defaultYield: 1, costPerPortion: 0, spicesCost: 0, ingredients: [], openingQty: 0
+        };
+        const docRef = doc(collection(firebaseDb, "erp_recipes"));
+        batch.set(docRef, newItem);
+        rId = docRef.id;
+        rec = { id: rId, ...newItem };
+        localRecipes.push(rec);
+      }
+      processedPmix.push({ ...p, recipeId: rId, name: rec.name });
+    }
+
+    if (localRecipes.length > recipesDb.length) {
+      setRecipesDb(localRecipes);
+    }
+
+    const finalFormData = { ...formData, pmix: processedPmix };
+
+    let updatedDb;
     if (originalDate) {
       updatedDb = activeDb.filter(r => toDateNum(r.date) !== toDateNum(originalDate) && toDateNum(r.date) !== targetNum);
-      updatedDb.push(formData);
+      updatedDb.push(finalFormData);
     } else if (isExistingRecord) {
-      updatedDb = activeDb.map(r => toDateNum(r.date) === targetNum ? formData : r);
+      updatedDb = activeDb.map(r => toDateNum(r.date) === targetNum ? finalFormData : r);
     } else {
-      updatedDb = [...activeDb, formData];
+      updatedDb = [...activeDb, finalFormData];
     }
     
     updatedDb.sort((a, b) => toDateNum(a.date) - toDateNum(b.date));
@@ -280,27 +372,24 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
     if (setSalesDb) setSalesDb(fullyUpdatedDb);
     
     try {
-      const batch = writeBatch(firebaseDb);
-      
-      // Save Sales Records
       fullyUpdatedDb.forEach(record => {
         const docRef = doc(firebaseDb, "erp_sales_db", record.date);
         batch.set(docRef, record);
       });
 
       // ---- AUTO-DEDUCTION INVENTORY ENGINE ----
-      const dateToClean = originalDate || formData.date;
+      const dateToClean = originalDate || finalFormData.date;
       const qClean = query(collection(firebaseDb, "erp_stock_receipts"), where("date", "==", dateToClean), where("isAutoDeduction", "==", true));
       const cleanSnap = await getDocs(qClean);
       cleanSnap.forEach(docSnap => batch.delete(doc(firebaseDb, "erp_stock_receipts", docSnap.id)));
 
-      if (originalDate && originalDate !== formData.date) {
-        const qCleanNew = query(collection(firebaseDb, "erp_stock_receipts"), where("date", "==", formData.date), where("isAutoDeduction", "==", true));
+      if (originalDate && originalDate !== finalFormData.date) {
+        const qCleanNew = query(collection(firebaseDb, "erp_stock_receipts"), where("date", "==", finalFormData.date), where("isAutoDeduction", "==", true));
         const cleanSnapNew = await getDocs(qCleanNew);
         cleanSnapNew.forEach(docSnap => batch.delete(doc(firebaseDb, "erp_stock_receipts", docSnap.id)));
       }
 
-      const validPmix = formData.pmix.filter(p => p.recipeId && Number(p.qtySold) > 0);
+      const validPmix = finalFormData.pmix.filter(p => p.recipeId && Number(p.qtySold) > 0);
       if (validPmix.length > 0) {
         const stockSnap = await getDocs(collection(firebaseDb, "erp_stock_receipts"));
         const allReceipts = stockSnap.docs.map(d => d.data());
@@ -316,8 +405,8 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
 
         const ingredientDeductions = {};
         validPmix.forEach(pmixItem => {
-          const recipe = recipesDb.find(r => r.id === pmixItem.recipeId);
-          if (recipe) {
+          const recipe = localRecipes.find(r => r.id === pmixItem.recipeId);
+          if (recipe && recipe.ingredients) {
             const multiplier = Number(pmixItem.qtySold) / (Number(recipe.yieldPortions) || 1);
             recipe.ingredients.forEach(ing => {
               ingredientDeductions[ing.ingredientId] = (ingredientDeductions[ing.ingredientId] || 0) + (ing.qty * multiplier);
@@ -335,21 +424,21 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
           const dedId = "DED-" + Date.now().toString() + "-" + Math.random().toString(36).substring(7);
           batch.set(doc(firebaseDb, "erp_stock_receipts", dedId), {
             id: dedId,
-            date: formData.date,
+            date: finalFormData.date,
             isAutoDeduction: true,
             ingredientId: ingId,
             qty: -qtyToDeduct,
             totalCost: -financialDeduction,
             unitCost: avgCost,
             supplier: 'System Auto-Deduction',
-            invoiceRef: `PMIX-${formData.date}`
+            invoiceRef: `PMIX-${finalFormData.date}`
           });
         });
       }
       // -----------------------------------------
 
       await batch.commit();
-      alert(originalDate || isExistingRecord ? `✅ Daily Sales & Inventory Deductions for ${formData.date} Updated!` : `✅ Daily Sales & Inventory Deductions for ${formData.date} Saved!`);
+      alert(originalDate || isExistingRecord ? `✅ Daily Sales & Inventory Deductions for ${finalFormData.date} Updated!` : `✅ Daily Sales & Inventory Deductions for ${finalFormData.date} Saved!`);
       
       setOriginalDate(null);
       setFormData({ ...initialFormState, date: getToday(), openingTill: getOpeningTillForDate(getToday(), fullyUpdatedDb) });
@@ -388,7 +477,6 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
       });
       batch.delete(doc(firebaseDb, "erp_sales_db", targetDate));
 
-      // Reverse (Delete) the Auto-Deductions for this date
       const qClean = query(collection(firebaseDb, "erp_stock_receipts"), where("date", "==", targetDate), where("isAutoDeduction", "==", true));
       const cleanSnap = await getDocs(qClean);
       cleanSnap.forEach(docSnap => batch.delete(doc(firebaseDb, "erp_stock_receipts", docSnap.id)));
@@ -435,8 +523,14 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
 
   const vatPercentage = tillTotalNet > 0 && formData.vatAmount ? ((val(formData.vatAmount) / tillTotalNet) * 100).toFixed(2) : '0.00';
 
+  const totalPmixSales = formData.pmix.reduce((sum, item) => sum + (Number(item.qtySold) || 0) * (Number(item.price) || 0), 0);
+
   return (
     <div style={{ padding: '24px', fontFamily: sheetTheme.font, background: '#ffffff', minHeight: '100vh', color: '#000' }}>
+      <datalist id="recipe-options">
+        {recipesDb.map(r => <option key={r.id} value={r.name} />)}
+      </datalist>
+
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${sheetTheme.border}`, paddingBottom: '12px', marginBottom: '8px' }}>
@@ -539,49 +633,75 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
                   <tr><td style={{...labelTd, fontWeight: '700'}}>Effective VAT % Rate</td><td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={`${vatPercentage} %`} bold={true} /></td></tr>
                 </tbody>
               </table>
-
-              {/* 🚀 NEW AUTO-DEDUCTION ENGINE UI */}
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr><th colSpan="3" style={{ background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, padding: '8px 12px', textAlign: 'left', border: `1px solid ${sheetTheme.border}`, fontSize: '14px', fontWeight: '700' }}>Menu Items Sold (Auto-Deduction PMIX)</th></tr>
-                  <tr>
-                    <td style={{...labelTd, textAlign: 'center'}}>Menu Item / Recipe Sold</td>
-                    <td style={{...labelTd, textAlign: 'center', width: '20%'}}>Qty Sold</td>
-                    <td style={{...labelTd, textAlign: 'center', width: '10%'}}></td>
-                  </tr>
-                </thead>
-                <tbody>
-                  {formData.pmix.map((item, idx) => (
+            </div>
+          </div>
+          
+          <div style={{ marginTop: '32px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr><th colSpan="5" style={{ background: sheetTheme.headerPurpleBg, color: sheetTheme.headerPurpleText, padding: '8px 12px', textAlign: 'left', border: `1px solid ${sheetTheme.border}`, fontSize: '14px', fontWeight: '700' }}>Menu Items Sold (Auto-Deduction & Live Pricing)</th></tr>
+                <tr>
+                  <td style={{...labelTd, textAlign: 'left'}}>Menu Item / Recipe Sold (Type or Select)</td>
+                  <td style={{...labelTd, textAlign: 'center', width: '15%'}}>Qty Sold</td>
+                  <td style={{...labelTd, textAlign: 'center', width: '15%'}}>Price (£)</td>
+                  <td style={{...labelTd, textAlign: 'center', width: '15%'}}>Total (£)</td>
+                  <td style={{...labelTd, textAlign: 'center', width: '5%'}}></td>
+                </tr>
+              </thead>
+              <tbody>
+                {formData.pmix.map((item, idx) => {
+                  const itemName = item.name !== undefined ? item.name : (recipesDb.find(r => r.id === item.recipeId)?.name || '');
+                  const stockItem = finishedGoodsStock.find(r => r.name === itemName || r.displayName === itemName);
+                  
+                  return (
                     <tr key={item.id}>
                       <td style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px 8px', background: '#fff' }}>
-                        <select 
-                          value={item.recipeId} 
-                          onChange={e => handlePmixChange(idx, 'recipeId', e.target.value)}
-                          style={{ width: '100%', padding: '6px', border: 'none', background: 'transparent', outline: 'none', fontSize: '12px' }}
-                        >
-                          <option value="">-- Select Recipe --</option>
-                          {recipesDb.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </select>
+                        <input 
+                          list="recipe-options" 
+                          value={itemName} 
+                          onChange={e => handlePmixChange(idx, 'name', e.target.value)} 
+                          placeholder="Type item name..."
+                          style={{ width: '100%', padding: '6px', border: 'none', background: 'transparent', outline: 'none', fontSize: '13px', fontWeight: 'bold', color: '#0f172a' }}
+                        />
+                        {stockItem ? (
+                          <div style={{ fontSize: '11px', color: stockItem.currentQty < 0 ? '#dc2626' : '#059669', marginTop: '2px', fontWeight: '700' }}>In Stock: {fmtQty(stockItem.currentQty)} {stockItem.finishedUom || 'Portions'}</div>
+                        ) : itemName ? (
+                          <div style={{ fontSize: '11px', color: '#d97706', marginTop: '2px', fontWeight: '700' }}>+ New item will be created in inventory</div>
+                        ) : null}
                       </td>
                       <td style={inputTd}>
-                        <CellInput value={item.qtySold} onChange={e => handlePmixChange(idx, 'qtySold', e.target.value)} placeholder="0" />
+                        <CellInput value={item.qtySold} onChange={e => handlePmixChange(idx, 'qtySold', e.target.value)} placeholder="0" align="center" />
+                      </td>
+                      <td style={inputTd}>
+                        <CellInput value={item.price} onChange={e => handlePmixChange(idx, 'price', e.target.value)} placeholder="0.00" align="right" />
+                      </td>
+                      <td style={{ border: `1px solid ${sheetTheme.border}`, padding: 0 }}>
+                        <CellCalc value={fmtMoney((Number(item.qtySold)||0) * (Number(item.price)||0))} />
                       </td>
                       <td style={{ border: `1px solid ${sheetTheme.border}`, padding: '4px', textAlign: 'center', background: '#fff' }}>
                         <button type="button" onClick={() => removePmixLine(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} /></button>
                       </td>
                     </tr>
-                  ))}
-                  <tr>
-                    <td colSpan="3" style={{ padding: '8px 12px', background: sheetTheme.labelBg, border: `1px solid ${sheetTheme.border}` }}>
-                      <button type="button" onClick={addPmixLine} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#fff', color: sheetTheme.headerPurpleText, border: `1px dashed ${sheetTheme.headerPurpleText}`, borderRadius: '4px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
-                        <PlusCircle size={14} /> Add Menu Item Sold
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-            </div>
+                  );
+                })}
+                <tr>
+                  <td colSpan="3" style={{ textAlign: 'right', padding: '8px 12px', fontWeight: '800', background: sheetTheme.labelBg, border: `1px solid ${sheetTheme.border}`, color: '#333', fontSize: '13px' }}>
+                    Total Typed Menu Sales (£) :
+                  </td>
+                  <td style={{ border: `1px solid ${sheetTheme.border}`, padding: 0 }}>
+                    <CellCalc value={fmtMoney(totalPmixSales)} bold={true} bg="#e2efda" color="#276749" />
+                  </td>
+                  <td style={{ border: `1px solid ${sheetTheme.border}`, background: sheetTheme.labelBg }}></td>
+                </tr>
+                <tr>
+                  <td colSpan="5" style={{ padding: '8px 12px', background: sheetTheme.labelBg, border: `1px solid ${sheetTheme.border}` }}>
+                    <button type="button" onClick={addPmixLine} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: '#fff', color: sheetTheme.headerPurpleText, border: `1px dashed ${sheetTheme.headerPurpleText}`, borderRadius: '4px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                      <PlusCircle size={14} /> Add Menu Item Line
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${sheetTheme.border}` }}>
@@ -594,7 +714,7 @@ export default function DailySalesForm({ db = [], salesDb = [], setSalesDb, acco
               Cancel
             </button>
             <button type="submit" style={{ padding: '8px 32px', background: isExistingRecord ? '#166534' : '#0369a1', color: '#fff', fontSize: '13px', fontWeight: '700', border: 'none', cursor: 'pointer' }}>
-              {isExistingRecord ? 'Update Record & Deduct Stock' : 'Save Record & Deduct Stock'}
+              {isExistingRecord ? 'Update Record & Auto-Deduct Stock' : 'Save Record & Auto-Deduct Stock'}
             </button>
           </div>
         </form>
