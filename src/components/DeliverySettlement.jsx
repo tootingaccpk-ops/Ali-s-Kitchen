@@ -243,7 +243,7 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
       } else if (name === 'advertisement') {
         setFormData(prev => ({ ...prev, advertisement: cleanValue, vatOnAdvertisement: numValue === '' ? '' : (numValue * 0.20) }));
       } else if (name === 'serviceCharges') {
-        setFormData(prev => ({ ...prev, serviceCharges: cleanValue, vatOnServiceCharges: (prev.platform === 'Just Eat') ? '' : (numValue === '' ? '' : (numValue * 0.20)) }));
+        setFormData(prev => ({ ...prev, serviceCharges: cleanValue, vatOnServiceCharges: numValue === '' ? '' : (numValue * 0.20) }));
       } else {
         setFormData(prev => ({ ...prev, [name]: cleanValue }));
       }
@@ -291,30 +291,26 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
   };
 
   const val = (num) => Number(num) || 0;
-  const isJustEat = formData.platform === 'Just Eat';
 
   const totalAdjPos = formData.adjPosList.reduce((sum, a) => sum + val(a.amount), 0);
   const totalAdjNeg = formData.adjNegList.reduce((sum, a) => sum + val(a.amount), 0);
 
   const erpGrossInput = val(formData.grossSales);
-  const serviceCharges = val(formData.serviceCharges);
-  
-  const effectiveErpGross = isJustEat ? (erpGrossInput - serviceCharges) : erpGrossInput;
-  
-  let theoreticalComm = 0;
-  if (formData.platform === 'Uber Eats') theoreticalComm = effectiveErpGross * 0.26;
-  else if (formData.platform === 'Deliveroo') theoreticalComm = effectiveErpGross * 0.25;
-  else if (formData.platform === 'Just Eat') theoreticalComm = effectiveErpGross * 0.30;
-  else if (formData.platform === 'App4') theoreticalComm = effectiveErpGross * 0.04;
-  
-  const theoreticalVat = theoreticalComm * 0.20;
 
   const liveExpectedPayout = 
-    effectiveErpGross - theoreticalComm - theoreticalVat - val(formData.advertisement) - val(formData.vatOnAdvertisement) - 
-    (isJustEat ? 0 : serviceCharges) - (isJustEat ? 0 : val(formData.vatOnServiceCharges)) - val(formData.refunds) - totalAdjNeg + totalAdjPos;
+    erpGrossInput 
+    - val(formData.commission) 
+    - val(formData.vatOnCommission) 
+    - val(formData.advertisement) 
+    - val(formData.vatOnAdvertisement) 
+    - val(formData.serviceCharges) 
+    - val(formData.vatOnServiceCharges) 
+    - val(formData.refunds) 
+    - totalAdjNeg 
+    + totalAdjPos;
 
   const liveVariance = val(formData.actualPayout) - liveExpectedPayout;
-  const grossVariance = val(formData.platformGross) - effectiveErpGross;
+  const grossVariance = val(formData.platformGross) - erpGrossInput;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -489,13 +485,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                 </thead>
                 <tbody>
                   <tr><td style={labelTd}>ERP Gross Sales (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="grossSales" value={formData.grossSales} onChange={handleChange} /></td></tr>
-                  
-                  {isJustEat && (
-                    <tr>
-                      <td style={{...labelTd, color: '#0369a1'}}>Effective ERP Gross (£)</td>
-                      <td style={{border: `1px solid ${sheetTheme.border}`, padding: 0}}><CellCalc value={fmtMoney(effectiveErpGross)} bold={true} color="#0369a1" bg="#e0f2fe" /></td>
-                    </tr>
-                  )}
 
                   <tr><td style={labelTd}>Platform Gross (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="platformGross" value={formData.platformGross} onChange={handleChange} /></td></tr>
                   
@@ -508,8 +497,8 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                   <tr><td style={labelTd}>Advertisement (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="advertisement" value={formData.advertisement} onChange={handleChange} textColor="#dc2626" /></td></tr>
                   <tr><td style={labelTd}>VAT on Adv (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="vatOnAdvertisement" value={formData.vatOnAdvertisement} onChange={handleChange} textColor="#dc2626" bg="#fef2f2" /></td></tr>
                   
-                  <tr><td style={{...labelTd, color: isJustEat ? '#94a3b8' : '#333'}}>Service Charges (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="serviceCharges" value={formData.serviceCharges} onChange={handleChange} textColor={isJustEat ? '#94a3b8' : '#dc2626'} /></td></tr>
-                  <tr><td style={{...labelTd, color: isJustEat ? '#94a3b8' : '#333'}}>VAT on Service Chg (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="vatOnServiceCharges" value={formData.vatOnServiceCharges} onChange={handleChange} textColor={isJustEat ? '#94a3b8' : '#dc2626'} bg={isJustEat ? '#f1f5f9' : '#fef2f2'} disabled={isJustEat} /></td></tr>
+                  <tr><td style={labelTd}>Service Charges (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="serviceCharges" value={formData.serviceCharges} onChange={handleChange} textColor="#dc2626" /></td></tr>
+                  <tr><td style={labelTd}>VAT on Service Chg (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="vatOnServiceCharges" value={formData.vatOnServiceCharges} onChange={handleChange} textColor="#dc2626" bg="#fef2f2" /></td></tr>
                   
                   <tr><td style={labelTd}>Customer Refunds (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="refunds" value={formData.refunds} onChange={handleChange} textColor="#dc2626" /></td></tr>
                 </tbody>
