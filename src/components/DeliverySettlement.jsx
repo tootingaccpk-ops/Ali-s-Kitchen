@@ -223,6 +223,15 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     }
   };
 
+  const handleRefreshGross = () => {
+    const freshGross = calculateErpGross(formData.dateFrom, formData.dateTo, formData.platform, activeSalesDb);
+    if (freshGross !== '') {
+      setFormData(prev => ({ ...prev, grossSales: freshGross }));
+    } else {
+      alert("No sales found for this platform in this date range.");
+    }
+  };
+
   const handleChange = (e) => {
     const { name, value, type } = e.target;
     
@@ -348,7 +357,6 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
     try {
       await setDoc(doc(firebaseDb, "erp_delivery", recordToSave.id), recordToSave);
 
-      // Auto-deposits purely into LK Associates as requested
       if (setReceiptsDb && formData.actualPayout && Number(formData.actualPayout) > 0 && formData.payoutDate) {
         const receiptEntry = {
           id: syncId,
@@ -484,7 +492,19 @@ export default function DeliverySettlements({ db = [], setDb, setDeliveryDb, sal
                   <tr><th colSpan="2" style={{ background: sheetTheme.headerOrangeBg, color: sheetTheme.headerOrangeText, padding: '8px 12px', textAlign: 'left', border: `1px solid ${sheetTheme.border}`, fontSize: '14px', fontWeight: '700' }}>Gross & Deductions</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td style={labelTd}>ERP Gross Sales (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="grossSales" value={formData.grossSales} onChange={handleChange} /></td></tr>
+                  <tr>
+                    <td style={labelTd}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>ERP Gross Sales (£)</span>
+                        <button type="button" onClick={handleRefreshGross} style={{ fontSize: '10px', padding: '2px 6px', background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}>
+                          ↻ Refresh
+                        </button>
+                      </div>
+                    </td>
+                    <td style={inputTd}>
+                      <CellInput onKeyDown={handleKeyDown} isNumeric={true} name="grossSales" value={formData.grossSales} onChange={handleChange} />
+                    </td>
+                  </tr>
 
                   <tr><td style={labelTd}>Platform Gross (£)</td><td style={inputTd}><CellInput onKeyDown={handleKeyDown} isNumeric={true} name="platformGross" value={formData.platformGross} onChange={handleChange} /></td></tr>
                   
